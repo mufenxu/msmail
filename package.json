@@ -1,0 +1,33 @@
+{
+  "name": "monkey-mail",
+  "version": "1.0.0",
+  "description": "Monkey Mail Microsoft Outlook read-only mail center",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "nodemon main.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "api",
+    "ms-oauth2api-next"
+  ],
+  "author": "Unix",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^16.5.0",
+    "koa": "^3.0.0",
+    "koa-body": "^6.0.1",
+    "koa-bodyparser": "^4.4.1",
+    "koa-router": "^13.0.1",
+    "koa-static": "^5.0.0",
+    "mailparser": "^3.9.0",
+    "node-fetch": "^2.7.0",
+    "node-imap": "^0.9.6",
+    "socks-proxy-agent": "^8.0.5",
+    "undici": "^6.22.0",
+    "winston": "^3.17.0",
+    "winston-daily-rotate-file": "^5.0.0"
+  }
+}

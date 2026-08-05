@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 B · 多账号管理工作台</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --border: #e6e8ec;
+    --border-strong: #d9dce2;
+    --text: #16181d;
+    --text-2: #525b66;
+    --text-3: #8a93a0;
+    --accent: #2563eb;
+    --accent-soft: #eef4ff;
+    --accent-border: #c7d9fb;
+    --hover: #f3f5f8;
+    --ok: #16a34a;
+    --ok-soft: #e9f7ef;
+    --warn: #d97706;
+    --warn-soft: #fdf3e2;
+    --danger: #dc2626;
+    --danger-soft: #fdeaea;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.05);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; overflow: hidden;
+  }
+  .app { display: flex; height: 100vh; }
+
+  /* Left rail */
+  .rail {
+    width: 64px; background: #16181d; color: #b6bdc7;
+    display: flex; flex-direction: column; align-items: center; padding: 18px 0; gap: 10px; flex-shrink: 0;
+  }
+  .rail-logo {
+    width: 36px; height: 36px; border-radius: 10px; margin-bottom: 16px;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    box-shadow: 0 4px 12px rgba(37,99,235,.35);
+  }
+  .rail-item {
+    width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .rail-item:hover { background: #23262e; color: #fff; }
+  .rail-item.active { background: var(--accent); color: #fff; box-shadow: 0 3px 10px rgba(37,99,235,.4); }
+  .rail-item.bottom { margin-top: auto; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 232px; background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 20px 14px; flex-shrink: 0;
+  }
+  .side-title { font-size: 12px; font-weight: 600; color: var(--text-3); letter-spacing: .5px; padding: 0 8px 10px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+    border-radius: 9px; color: var(--text-2); cursor: pointer; font-size: 13.5px;
+  }
+  .nav-item:hover { background: var(--hover); color: var(--text); }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav-item svg { color: var(--text-3); }
+  .nav-item.active svg { color: var(--accent); }
+  .side-divider { height: 1px; background: var(--border); margin: 14px 8px; }
+  .acc-quick {
+    display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+    border-radius: 9px; cursor: pointer;
+  }
+  .acc-quick:hover { background: var(--hover); }
+  .acc-dot { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 700; }
+  .acc-quick-body { flex: 1; min-width: 0; }
+  .acc-quick-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .acc-quick-meta { font-size: 11px; color: var(--text-3); }
+  .acc-quick .badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+  .side-footer { margin-top: auto; padding: 12px 10px 4px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-3); }
+
+  /* Main */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 22px 26px; overflow: hidden; }
+  .page-head { display: flex; align-items: center; gap: 14px; }
+  .page-title h1 { font-size: 19px; font-weight: 700; }
+  .page-title p { font-size: 12.5px; color: var(--text-3); margin-top: 2px; }
+  .page-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500;
+    border-radius: 9px; padding: 8px 14px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text-2); cursor: pointer;
+  }
+  .btn:hover { background: var(--hover); color: var(--text); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(37,99,235,.25); }
+  .btn.primary:hover { background: #1d4ed8; }
+  .btn.ghost { border-color: transparent; background: transparent; }
+  .search-box {
+    display: flex; align-items: center; gap: 8px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 9px; padding: 8px 12px; color: var(--text-3);
+  }
+  .search-box input { border: none; outline: none; background: transparent; width: 170px; font-size: 13px; color: var(--text); }
+
+  /* KPI cards */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 20px 0; }
+  .kpi {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .kpi-top { display: flex; align-items: center; gap: 10px; }
+  .kpi-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+  .kpi-label { font-size: 12.5px; color: var(--text-2); }
+  .kpi-value { font-size: 24px; font-weight: 700; margin-top: 8px; letter-spacing: -.3px; }
+  .kpi-foot { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+  .kpi-foot .up { color: var(--ok); font-weight: 600; }
+  .kpi-foot .warn-text { color: var(--warn); font-weight: 600; }
+  .kpi-icon.blue { background: #e8f0fe; color: var(--accent); }
+  .kpi-icon.green { background: var(--ok-soft); color: var(--ok); }
+  .kpi-icon.amber { background: var(--warn-soft); color: var(--warn); }
+  .kpi-icon.red { background: var(--danger-soft); color: var(--danger); }
+
+  /* Table card */
+  .card {
+    flex: 1; min-height: 0; background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .card-bar {
+    display: flex; align-items: center; gap: 10px; padding: 13px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-bar h2 { font-size: 14px; font-weight: 600; }
+  .card-bar .sub { font-size: 12px; color: var(--text-3); }
+  .card-bar .spacer { flex: 1; }
+  .chips { display: flex; gap: 6px; }
+  .chip { font-size: 12px; color: var(--text-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; cursor: pointer; background: var(--panel); }
+  .chip.active { background: var(--accent-soft); border-color: var(--accent-border); color: var(--accent); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 12px; font-weight: 600; color: var(--text-3);
+    padding: 11px 18px; background: #fafbfc; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 12px 18px; border-bottom: 1px solid #f2f3f5; font-size: 13px; }
+  tbody tr:hover { background: var(--hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  .cell-user { display: flex; align-items: center; gap: 10px; min-width: 210px; }
+  .cell-user .name { font-weight: 600; font-size: 13px; }
+  .cell-user .mail { font-size: 12px; color: var(--text-3); }
+  .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; color: var(--text-2); }
+  .stat-pair { display: flex; gap: 12px; font-size: 12.5px; color: var(--text-2); }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+  .status .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .status.ok { background: var(--ok-soft); color: #12713c; }
+  .status.ok .dot { background: var(--ok); }
+  .status.err { background: var(--danger-soft); color: #b91c1c; }
+  .status.err .dot { background: var(--danger); }
+  .row-actions { display: flex; gap: 6px; }
+  .mini-btn { font-size: 12px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); color: var(--text-2); cursor: pointer; }
+  .mini-btn:hover { background: var(--hover); color: var(--text); }
+  .mini-btn.primary { color: var(--accent); border-color: var(--accent-border); background: var(--accent-soft); }
+  .mini-btn.danger { color: var(--danger); }
+  .check { width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--border-strong); accent-color: var(--accent); }
+  .table-foot {
+    display: flex; align-items: center; gap: 10px; padding: 12px 18px;
+    border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text-3);
+  }
+  .table-foot .spacer { flex: 1; }
+  .pager { display: flex; align-items: center; gap: 6px; }
+  .pg-btn { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); color: var(--text-2); cursor: pointer; font-size: 12px; }
+  .pg-btn:hover { background: var(--hover); }
+  .pg-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* Modal */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(22,24,29,.42);
+    display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px);
+  }
+  .modal {
+    width: 620px; background: var(--panel); border-radius: 16px;
+    box-shadow: 0 24px 60px rgba(16,24,40,.22); overflow: hidden;
+  }
+  .modal-head { display: flex; align-items: center; padding: 18px 22px 14px; }
+  .modal-head h3 { font-size: 15.5px; font-weight: 700; }
+  .modal-head .sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+  .modal-head .x { margin-left: auto; width: 28px; height: 28px; border-radius: 8px; border: none; background: transparent; color: var(--text-3); font-size: 15px; cursor: pointer; }
+  .modal-head .x:hover { background: var(--hover); color: var(--text); }
+  .tabs { display: flex; gap: 4px; padding: 0 22px; border-bottom: 1px solid var(--border); }
+  .tab { font-size: 13px; color: var(--text-2); padding: 9px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+  .modal-body { padding: 20px 22px; }
+  .dropzone {
+    border: 1.5px dashed var(--border-strong); border-radius: 12px;
+    padding: 30px 20px; text-align: center; color: var(--text-3); background: #fafbfc;
+  }
+  .dropzone .big { font-size: 13px; color: var(--text-2); }
+  .dropzone .big b { color: var(--accent); }
+  .dropzone .small { font-size: 12px; margin-top: 4px; }
+  .form-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+  .form-row label { font-size: 12.5px; color: var(--text-2); width: 86px; flex-shrink: 0; }
+  .form-input {
+    flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+    font-size: 13px; color: var(--text); background: var(--panel);
+  }
+  .hint { font-size: 11.5px; color: var(--text-3); margin-top: 8px; line-height: 1.6; }
+  .hint code { background: #f2f4f7; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--text-2); }
+  .modal-foot { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--border); background: #fafbfc; }
+  .modal-foot .spacer { flex: 1; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <nav class="rail">
+      <div class="rail-logo">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+      </div>
+      <div class="rail-item active" title="总览">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      </div>
+      <div class="rail-item" title="账号管理">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      </div>
+      <div class="rail-item" title="邮件查看">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+      </div>
+      <div class="rail-item" title="日志">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      </div>
+      <div class="rail-item bottom" title="设置">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
+    </nav>
+
+    <aside class="sidebar">
+      <div class="side-title">导航</div>
+      <div class="nav-item active">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        总览
+      </div>
+      <div class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        账号管理
+      </div>
+      <div class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+        邮件查看
+      </div>
+      <div class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        同步日志
+      </div>
+
+      <div class="side-divider"></div>
+      <div class="side-title">快捷账号</div>
+      <div class="acc-quick">
+        <div class="acc-dot" style="background:linear-gradient(135deg,#2d7ff9,#0f5fc0)">张</div>
+        <div class="acc-quick-body">
+          <div class="acc-quick-name">zhang.san@outlook.com</div>
+          <div class="acc-quick-meta">收件箱 12 · 正常</div>
+        </div>
+        <span class="badge">12</span>
+      </div>
+      <div class="acc-quick">
+        <div class="acc-dot" style="background:linear-gradient(135deg,#13b8a6,#0a8f80)">L</div>
+        <div class="acc-quick-body">
+          <div class="acc-quick-name">li.si@hotmail.com</div>
+          <div class="acc-quick-meta">收件箱 5 · 正常</div>
+        </div>
+        <span class="badge">5</span>
+      </div>
+      <div class="acc-quick">
+        <div class="acc-dot" style="background:linear-gradient(135deg,#e34c6d,#b82546)">王</div>
+        <div class="acc-quick-body">
+          <div class="acc-quick-name">wang.wu@outlook.com</div>
+          <div class="acc-quick-meta">收件箱 8 · 正常</div>
+        </div>
+      </div>
+      <div class="side-footer">4 个账号 · 上次同步 09:32</div>
+    </aside>
+
+    <main class="main">
+      <div class="page-head">
+        <div class="page-title">
+          <h1>账号总览</h1>
+          <p>统一管理所有 Outlook / Hotmail / Live 账号</p>
+        </div>
+        <div class="page-actions">
+          <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input placeholder="搜索账号…">
+          </div>
+          <button class="btn ghost">访问密码</button>
+          <button class="btn">全部刷新</button>
+          <button class="btn primary" onclick="document.getElementById('modal').style.display='flex'">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            导入账号
+          </button>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon blue">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <span class="kpi-label">账号总数</span>
+          </div>
+          <div class="kpi-value">12</div>
+          <div class="kpi-foot">本月新增 <span class="up">+2</span> 个账号</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon green">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+            </div>
+            <span class="kpi-label">今日收件</span>
+          </div>
+          <div class="kpi-value">128</div>
+          <div class="kpi-foot">较昨日 <span class="up">↑ 12%</span></div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon amber">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+            </div>
+            <span class="kpi-label">垃圾邮件</span>
+          </div>
+          <div class="kpi-value">9</div>
+          <div class="kpi-foot">已标记垃圾箱 6 封</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon red">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            </div>
+            <span class="kpi-label">同步异常</span>
+          </div>
+          <div class="kpi-value">1</div>
+          <div class="kpi-foot"><span class="warn-text">zhao.liu@live.com</span> 令牌可能过期</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-bar">
+          <h2>全部账号</h2>
+          <span class="sub">12 条记录</span>
+          <span class="spacer"></span>
+          <div class="chips">
+            <span class="chip active">全部</span>
+            <span class="chip">正常</span>
+            <span class="chip">异常</span>
+          </div>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:40px"><input type="checkbox" class="check"></th>
+                <th>账号</th>
+                <th>客户端 ID</th>
+                <th>收件箱 / 垃圾</th>
+                <th>状态</th>
+                <th>上次同步</th>
+                <th style="width:190px">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" class="check"></td>
+                <td>
+                  <div class="cell-user">
+                    <div class="acc-dot" style="background:linear-gradient(135deg,#2d7ff9,#0f5fc0)">张</div>
+                    <div>
+                      <div class="name">zhang.san@outlook.com</div>
+                      <div class="mail">Outlook</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="mono">4f2c…a81e</span></td>
+                <td><div class="stat-pair"><span>12 封</span><span>2 封</span></div></td>
+                <td><span class="status ok"><span class="dot"></span>正常</span></td>
+                <td><span class="mono">09:32</span></td>
+                <td>
+                  <div class="row-actions">
+                    <button class="mini-btn primary">查看邮件</button>
+                    <button class="mini-btn">编辑</button>
+                    <button class="mini-btn danger">删除</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" class="check"></td>
+                <td>
+                  <div class="cell-user">
+                    <div class="acc-dot" style="background:linear-gradient(135deg,#13b8a6,#0a8f80)">L</div>
+                    <div>
+                      <div class="name">li.si@hotmail.com</div>
+                      <div class="mail">Hotmail</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="mono">91d8…c320</span></td>
+                <td><div class="stat-pair"><span>5 封</span><span>1 封</span></div></td>
+                <td><span class="status ok"><span class="dot"></span>正常</span></td>
+                <td><span class="mono">09:31</span></td>
+                <td>
+                  <div class="row-actions">
+                    <button class="mini-btn primary">查看邮件</button>
+                    <button class="mini-btn">编辑</button>
+                    <button class="mini-btn danger">删除</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" class="check"></td>
+                <td>
+                  <div class="cell-user">
+                    <div class="acc-dot" style="background:linear-gradient(135deg,#9b5de5,#6a36c4)">王</div>
+                    <div>
+                      <div class="name">wang.wu@outlook.com</div>
+                      <div class="mail">Outlook</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="mono">c7e4…9f02</span></td>
+                <td><div class="stat-pair"><span>8 封</span><span>3 封</span></div></td>
+                <td><span class="status ok"><span class="dot"></span>正常</span></td>
+                <td><span class="mono">09:30</span></td>
+                <td>
+                  <div class="row-actions">
+                    <button class="mini-btn primary">查看邮件</button>
+                    <button class="mini-btn">编辑</button>
+                    <button class="mini-btn danger">删除</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" class="check"></td>
+                <td>
+                  <div class="cell-user">
+                    <div class="acc-dot" style="background:linear-gradient(135deg,#f4a340,#d97b14)">Z</div>
+                    <div>
+                      <div class="name">zhao.liu@live.com</div>
+                      <div class="mail">Live</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="mono">3b76…d5c8</span></td>
+                <td><div class="stat-pair"><span>0 封</span><span>0 封</span></div></td>
+                <td><span class="status err"><span class="dot"></span>异常</span></td>
+                <td><span class="mono" style="color:#b91c1c">昨天 22:10</span></td>
+                <td>
+                  <div class="row-actions">
+                    <button class="mini-btn primary">查看邮件</button>
+                    <button class="mini-btn">编辑</button>
+                    <button class="mini-btn danger">删除</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot">
+          <span>已选 0 项</span>
+          <span class="spacer"></span>
+          <span>第 1 / 3 页</span>
+          <div class="pager">
+            <button class="pg-btn active">1</button>
+            <button class="pg-btn">2</button>
+            <button class="pg-btn">3</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Import modal -->
+  <div class="overlay" id="modal" style="display:flex">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <h3>导入账号</h3>
+          <div class="sub">支持文件导入与粘贴导入两种方式</div>
+        </div>
+        <button class="x" onclick="document.getElementById('modal').style.display='none'">✕</button>
+      </div>
+      <div class="tabs">
+        <span class="tab active">文件导入</span>
+        <span class="tab">粘贴导入</span>
+      </div>
+      <div class="modal-body">
+        <div class="dropzone">
+          <div class="big">点击选择或拖拽 <b>.txt / .csv</b> 文件到此处</div>
+          <div class="small">支持三/四段格式，每行一条账号</div>
+        </div>
+        <div class="form-row">
+          <label>分隔符</label>
+          <input class="form-input" value="----" style="max-width:120px">
+          <label style="width:auto;margin-left:8px">访问密码</label>
+          <input class="form-input" type="password" value="••••••••" style="max-width:160px">
+        </div>
+        <div class="hint">
+          推荐格式：<code>email----client_id----refresh_token</code>，兼容
+          <code>email----api_password----client_id----refresh_token</code>。访问密码为整个服务共享，不会随账号记录保存。
+        </div>
+      </div>
+      <div class="modal-foot">
+        <span class="hint" style="margin:0;color:#16a34a">✓ 已选择 accounts.txt（2.4 KB，12 条）</span>
+        <span class="spacer"></span>
+        <button class="btn" onclick="document.getElementById('modal').style.display='none'">取消</button>
+        <button class="btn primary">开始导入</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

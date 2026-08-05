@@ -1,0 +1,365 @@
+<template>
+  <aside class="sidebar">
+    <div class="side-head">
+      <span>账号</span>
+      <button class="icon-btn" title="导入账号" @click="$emit('add')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+    </div>
+
+    <div v-if="!passwordSet" class="side-empty">
+      <p>配置访问密码后即可加载账号</p>
+      <button class="link-btn" @click="$emit('configure-password')">去配置</button>
+    </div>
+    <template v-else>
+      <div
+        v-for="account in accounts"
+        :key="account.id ?? account.email"
+        class="account-item"
+        :class="{ active: account.id === selectedAccountId }"
+        @click="$emit('select', account)"
+      >
+        <div class="acc-avatar" :style="avatarStyle(account.email)">{{ senderInitial(account.email) }}</div>
+        <div class="acc-body">
+          <div class="account-email" :title="account.email">{{ account.email }}</div>
+          <div class="account-meta">
+            <span v-for="part in metaParts(account)" :key="part">{{ part }}</span>
+          </div>
+        </div>
+        <div class="acc-actions" @click.stop>
+          <button class="mini-icon" title="编辑" @click="$emit('edit', account)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            </svg>
+          </button>
+          <button class="mini-icon danger" title="删除" @click="$emit('remove', account)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18" />
+              <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div v-if="!accounts.length" class="side-empty">
+        <p>还没有账号，点击右上角 + 导入</p>
+      </div>
+    </template>
+
+    <div class="side-divider"></div>
+    <div class="side-head"><span>文件夹</span></div>
+    <div class="folder-item" :class="{ active: folder === 'INBOX' }" @click="$emit('folder', 'INBOX')">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      </svg>
+      收件箱
+      <span class="folder-count">{{ folderCount('INBOX') }}</span>
+    </div>
+    <div class="folder-item" :class="{ active: folder === 'Junk' }" @click="$emit('folder', 'Junk')">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      </svg>
+      垃圾邮件
+      <span class="folder-count">{{ folderCount('Junk') }}</span>
+    </div>
+
+    <div class="side-footer">
+      <div class="sync-row">
+        <span class="dot" :class="{ off: !passwordSet }"></span>
+        <span>{{ syncText }}</span>
+      </div>
+      <div class="footer-actions">
+        <button class="link-btn" @click="$emit('configure-password')">访问密码</button>
+        <button class="link-btn" @click="$emit('manage')">管理账号</button>
+      </div>
+    </div>
+  </aside>
+</template>
+
+<script lang="ts" setup>
+import { computed } from 'vue'
+import type { Account, Mailbox, MailboxCounts } from '@/types'
+import { avatarStyle, senderInitial, domainLabel } from '@/utils/format'
+
+const props = defineProps<{
+  accounts: Account[]
+  selectedAccountId: number | null
+  folder: Mailbox
+  counts: Record<string, MailboxCounts | undefined>
+  passwordSet: boolean
+  lastSync: string
+}>()
+
+defineEmits<{
+  (e: 'select', account: Account): void
+  (e: 'add'): void
+  (e: 'edit', account: Account): void
+  (e: 'remove', account: Account): void
+  (e: 'folder', mailbox: Mailbox): void
+  (e: 'manage'): void
+  (e: 'configure-password'): void
+}>()
+
+const accountKey = (account: Account) => String(account.id ?? account.email)
+const accountCounts = (account: Account): MailboxCounts | undefined => props.counts[accountKey(account)]
+const metaParts = (account: Account): string[] => {
+  const parts = [domainLabel(account.email)]
+  const accountCountsValue = accountCounts(account)
+  if (accountCountsValue) {
+    if (accountCountsValue.INBOX != null) parts.push(`收件箱 ${accountCountsValue.INBOX}`)
+    if (accountCountsValue.Junk != null) parts.push(`垃圾 ${accountCountsValue.Junk}`)
+  }
+  return parts
+}
+
+const folderCount = (mailbox: Mailbox): string | number => {
+  const account = props.accounts.find((a) => a.id === props.selectedAccountId)
+  if (!account) return '—'
+  const counts = props.counts[accountKey(account)]
+  return counts && counts[mailbox] != null ? counts[mailbox] : '—'
+}
+
+const syncText = computed(() => {
+  if (!props.passwordSet) return '未配置访问密码'
+  if (props.lastSync) return `上次同步 ${props.lastSync}`
+  return '尚未同步'
+})
+</script>
+
+<style scoped>
+.sidebar {
+  width: 246px;
+  flex-shrink: 0;
+  background: var(--mm-sidebar);
+  border-right: 1px solid var(--mm-border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px 12px;
+  min-height: 0;
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mm-text-3);
+  letter-spacing: 0.4px;
+}
+
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-panel);
+  color: var(--mm-text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.icon-btn:hover {
+  background: var(--mm-hover);
+  color: var(--mm-accent);
+  border-color: var(--mm-accent-border);
+}
+
+.account-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.12s ease;
+}
+
+.account-item:hover {
+  background: var(--mm-hover);
+}
+
+.account-item.active {
+  background: var(--mm-accent-soft);
+}
+
+.acc-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.acc-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-email {
+  font-size: 13px;
+  color: var(--mm-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-item.active .account-email {
+  color: var(--mm-accent);
+  font-weight: 600;
+}
+
+.account-meta {
+  font-size: 11.5px;
+  color: var(--mm-text-3);
+  display: flex;
+  gap: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.acc-actions {
+  display: none;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.account-item:hover .acc-actions {
+  display: flex;
+}
+
+.mini-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--mm-text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mini-icon:hover {
+  background: var(--mm-panel);
+  color: var(--mm-accent);
+  box-shadow: var(--mm-shadow);
+}
+
+.mini-icon.danger:hover {
+  color: var(--mm-danger);
+}
+
+.side-empty {
+  padding: 14px 10px;
+  font-size: 12.5px;
+  color: var(--mm-text-3);
+  line-height: 1.7;
+}
+
+.side-empty .link-btn {
+  margin-top: 2px;
+}
+
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--mm-accent);
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.side-divider {
+  height: 1px;
+  background: var(--mm-border);
+  margin: 14px 6px;
+}
+
+.folder-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--mm-text);
+  transition: background 0.12s ease;
+}
+
+.folder-item:hover {
+  background: var(--mm-hover);
+}
+
+.folder-item.active {
+  background: var(--mm-accent-soft);
+  color: var(--mm-accent);
+  font-weight: 600;
+}
+
+.folder-item svg {
+  color: var(--mm-text-3);
+  flex-shrink: 0;
+}
+
+.folder-item.active svg {
+  color: var(--mm-accent);
+}
+
+.folder-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--mm-text-3);
+  font-weight: 500;
+}
+
+.side-footer {
+  margin-top: auto;
+  padding: 12px 8px 2px;
+  border-top: 1px solid var(--mm-border);
+  font-size: 12px;
+  color: var(--mm-text-3);
+}
+
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sync-row .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mm-ok);
+  flex-shrink: 0;
+}
+
+.sync-row .dot.off {
+  background: #c7a24b;
+}
+
+.footer-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+}
+</style>

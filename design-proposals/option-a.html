@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 A · 清爽三栏邮箱客户端</title>
+<style>
+  :root {
+    --bg: #f3f5f7;
+    --panel: #ffffff;
+    --sidebar: #fafbfc;
+    --border: #e3e7ea;
+    --border-strong: #d5dade;
+    --text: #1a1d21;
+    --text-2: #5f666f;
+    --text-3: #8a9199;
+    --accent: #0f6cbd;
+    --accent-soft: #e4f0fb;
+    --accent-border: #b8d8f5;
+    --hover: #eef1f4;
+    --unread-bg: #f7f9fb;
+    --danger: #d13438;
+    --warn: #9d5d00;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    overflow: hidden;
+  }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Top bar */
+  .topbar {
+    height: 56px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 210px; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, #0f6cbd, #4a9fe0);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; box-shadow: 0 2px 6px rgba(15,108,189,.25);
+  }
+  .brand-name { font-size: 16px; font-weight: 700; letter-spacing: .2px; }
+  .brand-sub { font-size: 12px; color: var(--text-3); margin-top: -1px; }
+  .topbar-search {
+    flex: 1; max-width: 420px; margin: 0 auto;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 12px; color: var(--text-3);
+  }
+  .topbar-search input {
+    border: none; outline: none; background: transparent;
+    flex: 1; font-size: 13.5px; color: var(--text);
+  }
+  .topbar-right { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; color: var(--text-2);
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 999px; padding: 5px 12px;
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: #3aa76d; }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: linear-gradient(135deg, #7a8fa6, #4a5d75);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600;
+  }
+
+  /* Body: three columns */
+  .body { flex: 1; display: flex; min-height: 0; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 244px; flex-shrink: 0; background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 16px 12px;
+  }
+  .side-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 6px 8px;
+  }
+  .side-head span { font-size: 12px; font-weight: 600; color: var(--text-3); letter-spacing: .4px; }
+  .icon-btn {
+    width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text-2); display: flex;
+    align-items: center; justify-content: center; cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--hover); }
+  .account-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 10px; border-radius: 9px; cursor: pointer;
+  }
+  .account-item:hover { background: var(--hover); }
+  .account-item.active { background: var(--accent-soft); }
+  .account-item.active .account-email { color: var(--accent); font-weight: 600; }
+  .acc-avatar {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 13px; font-weight: 700;
+  }
+  .acc-body { flex: 1; min-width: 0; }
+  .account-email { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .account-meta { font-size: 11.5px; color: var(--text-3); display: flex; gap: 6px; }
+  .badge {
+    min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+    background: var(--accent); color: #fff; font-size: 11px; font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .badge.warn { background: var(--warn); }
+  .side-divider { height: 1px; background: var(--border); margin: 14px 6px; }
+  .folder-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13.5px; color: var(--text);
+  }
+  .folder-item:hover { background: var(--hover); }
+  .folder-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .folder-item svg { color: var(--text-3); }
+  .folder-item.active svg { color: var(--accent); }
+  .folder-count { margin-left: auto; font-size: 12px; color: var(--text-3); font-weight: 500; }
+  .side-footer {
+    margin-top: auto; padding: 12px 8px 2px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-3);
+  }
+  .sync-row { display: flex; align-items: center; gap: 7px; }
+  .sync-row .dot { width: 6px; height: 6px; border-radius: 50%; background: #3aa76d; }
+
+  /* Middle: mail list */
+  .maillist {
+    width: 384px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0;
+  }
+  .list-head { padding: 18px 20px 12px; }
+  .list-title { display: flex; align-items: baseline; gap: 10px; }
+  .list-title h2 { font-size: 17px; font-weight: 700; }
+  .list-title .count { font-size: 12.5px; color: var(--text-3); }
+  .list-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
+  .tool-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--text-2); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; cursor: pointer;
+  }
+  .tool-btn:hover { background: var(--hover); }
+  .tool-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tool-btn.primary:hover { background: #0c5ea6; }
+  .list-toolbar .spacer { flex: 1; }
+  .msg-list { flex: 1; overflow: hidden; }
+  .msg {
+    display: flex; gap: 11px; padding: 13px 20px; cursor: pointer;
+    border-bottom: 1px solid #f0f2f4; position: relative;
+  }
+  .msg:hover { background: var(--hover); }
+  .msg.active { background: var(--accent-soft); }
+  .msg.unread { background: var(--unread-bg); }
+  .msg.unread .msg-from { font-weight: 700; }
+  .msg.unread .msg-subject { font-weight: 600; color: var(--text); }
+  .msg-avatar {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 13px; font-weight: 600;
+  }
+  .msg-body { flex: 1; min-width: 0; }
+  .msg-top { display: flex; align-items: center; gap: 8px; }
+  .msg-from { font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msg-time { margin-left: auto; font-size: 11.5px; color: var(--text-3); flex-shrink: 0; }
+  .msg-subject { font-size: 13px; color: var(--text); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msg-snippet {
+    font-size: 12.5px; color: var(--text-3); margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .msg-tags { display: flex; gap: 6px; margin-top: 5px; }
+  .tag {
+    font-size: 11px; padding: 1px 7px; border-radius: 4px;
+    background: #f1f3f5; color: var(--text-2); border: 1px solid var(--border);
+  }
+  .tag.attach { color: var(--text-2); display: inline-flex; align-items: center; gap: 3px; }
+  .unread-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  }
+
+  /* Right: reading pane */
+  .reader { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--panel); }
+  .reader-head {
+    padding: 22px 28px 0;
+  }
+  .reader-subject { font-size: 19px; font-weight: 700; line-height: 1.35; }
+  .reader-actions { display: flex; align-items: center; gap: 8px; margin: 14px 0 16px; }
+  .reader-actions .spacer { flex: 1; }
+  .reader-actions .btn {
+    font-size: 12.5px; color: var(--text-2); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 7px; padding: 7px 13px;
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .reader-actions .btn:hover { background: var(--hover); }
+  .sender-card {
+    display: flex; align-items: center; gap: 12px;
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg);
+  }
+  .sender-name { font-size: 13.5px; font-weight: 600; }
+  .sender-mail { font-size: 12.5px; color: var(--text-3); }
+  .sender-date { margin-left: auto; font-size: 12.5px; color: var(--text-3); }
+  .reader-body { flex: 1; overflow: hidden; padding: 20px 28px 0; }
+  .mail-preview {
+    background: #fbfcfd; border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px 24px; color: #33383f; font-size: 13.5px; line-height: 1.7;
+    max-height: 100%;
+  }
+  .mail-preview h3 { font-size: 14.5px; margin-bottom: 10px; color: var(--text); }
+  .mail-preview p { margin-bottom: 10px; }
+  .receipt {
+    margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  .receipt-row {
+    display: flex; justify-content: space-between; padding: 8px 12px; font-size: 13px;
+    border-bottom: 1px solid #eef1f3;
+  }
+  .receipt-row:last-child { border-bottom: none; }
+  .receipt-row .k { color: var(--text-3); }
+  .receipt-row.total { font-weight: 700; background: #f7f9fb; }
+  .readonly-note {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-3); margin-top: 14px; padding-top: 12px;
+    border-top: 1px dashed var(--border);
+  }
+  .readonly-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+        </div>
+        <div>
+          <div class="brand-name">Monkey Mail</div>
+          <div class="brand-sub">Outlook 多账号收件中心</div>
+        </div>
+      </div>
+      <div class="topbar-search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input placeholder="搜索发件人、主题、正文…">
+      </div>
+      <div class="topbar-right">
+        <span class="pill"><span class="dot"></span>访问密码已配置</span>
+        <div class="avatar">管</div>
+      </div>
+    </div>
+
+    <div class="body">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="side-head"><span>账号</span><button class="icon-btn" title="导入账号">+</button></div>
+        <div class="account-item active">
+          <div class="acc-avatar" style="background:linear-gradient(135deg,#2d7ff9,#0f5fc0)">张</div>
+          <div class="acc-body">
+            <div class="account-email">zhang.san@outlook.com</div>
+            <div class="account-meta"><span>收件箱 12</span><span>垃圾 2</span></div>
+          </div>
+        </div>
+        <div class="account-item">
+          <div class="acc-avatar" style="background:linear-gradient(135deg,#13b8a6,#0a8f80)">L</div>
+          <div class="acc-body">
+            <div class="account-email">li.si@hotmail.com</div>
+            <div class="account-meta"><span>收件箱 5</span><span>垃圾 1</span></div>
+          </div>
+          <span class="badge">5</span>
+        </div>
+        <div class="account-item">
+          <div class="acc-avatar" style="background:linear-gradient(135deg,#9b5de5,#6a36c4)">王</div>
+          <div class="acc-body">
+            <div class="account-email">wang.wu@outlook.com</div>
+            <div class="account-meta"><span>收件箱 0</span><span>垃圾 3</span></div>
+          </div>
+        </div>
+        <div class="account-item">
+          <div class="acc-avatar" style="background:linear-gradient(135deg,#f4a340,#d97b14)">Z</div>
+          <div class="acc-body">
+            <div class="account-email">zhao.liu@live.com</div>
+            <div class="account-meta"><span>收件箱 8</span><span>垃圾 0</span></div>
+          </div>
+          <span class="badge warn">8</span>
+        </div>
+
+        <div class="side-divider"></div>
+        <div class="side-head"><span>文件夹</span></div>
+        <div class="folder-item active">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          收件箱
+          <span class="folder-count">25</span>
+        </div>
+        <div class="folder-item">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          垃圾邮件
+          <span class="folder-count">6</span>
+        </div>
+        <div class="side-footer">
+          <div class="sync-row"><span class="dot"></span>上次同步：09:32 · 全部账号正常</div>
+        </div>
+      </aside>
+
+      <!-- Mail list -->
+      <section class="maillist">
+        <div class="list-head">
+          <div class="list-title">
+            <h2>收件箱</h2>
+            <span class="count">25 封 · 4 个账号</span>
+          </div>
+          <div class="list-toolbar">
+            <button class="tool-btn primary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              收取新邮件
+            </button>
+            <button class="tool-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+              筛选
+            </button>
+            <span class="spacer"></span>
+            <button class="tool-btn" title="批量删除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="msg-list">
+          <div class="msg unread">
+            <span class="unread-dot"></span>
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#2d7ff9,#0f5fc0)">张</div>
+            <div class="msg-body">
+              <div class="msg-top"><span class="msg-from">张经理</span><span class="msg-time">09:12</span></div>
+              <div class="msg-subject">七月账单已生成，请查收</div>
+              <div class="msg-snippet">附件为 7 月服务账单，共计 ¥1,280.00，请于 8 月 10 日前完成核对。</div>
+              <div class="msg-tags"><span class="tag attach">✉ 附件 2</span></div>
+            </div>
+          </div>
+          <div class="msg unread">
+            <span class="unread-dot"></span>
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#13b8a6,#0a8f80)">L</div>
+            <div class="msg-body">
+              <div class="msg-top"><span class="msg-from">Microsoft 帐户团队</span><span class="msg-time">08:47</span></div>
+              <div class="msg-subject">安全警报：有新设备登录了您的帐户</div>
+              <div class="msg-snippet">我们检测到您的帐户在 Windows 设备上进行了新的登录…</div>
+            </div>
+          </div>
+          <div class="msg active">
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#9b5de5,#6a36c4)">王</div>
+            <div class="msg-body">
+              <div class="msg-top"><span class="msg-from">Aliyun 云监控</span><span class="msg-time">昨天</span></div>
+              <div class="msg-subject">ECS 实例磁盘使用率超过 80% 阈值</div>
+              <div class="msg-snippet">实例 i-2ze42… 磁盘使用率已达 84%，请及时清理或扩容。</div>
+              <div class="msg-tags"><span class="tag">告警</span></div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#f4a340,#d97b14)">Z</div>
+            <div class="msg-body">
+              <div class="msg-top"><span class="msg-from">GitHub</span><span class="msg-time">昨天</span></div>
+              <div class="msg-subject">[monkey-mail] CI build failed on main</div>
+              <div class="msg-snippet">See the failing checks for details about the recent commit…</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#e34c6d,#b82546)">微</div>
+            <div class="msg-body">
+              <div class="msg-top"><span class="msg-from">Microsoft 365</span><span class="msg-time">周一</span></div>
+              <div class="msg-subject">你的订阅将于 8 月 12 日自动续订</div>
+              <div class="msg-snippet">为避免服务中断，请在续订日前确认支付方式有效。</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#2d7ff9,#0f5fc0)">张</div>
+            <div class="msg-body">
+              <div class="msg-top"><span class="msg-from">考勤系统</span><span class="msg-time">周一</span></div>
+              <div class="msg-subject">7 月考勤异常提醒</div>
+              <div class="msg-snippet">本月共 3 次未打卡记录，请尽快在系统内补卡。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Reading pane -->
+      <section class="reader">
+        <div class="reader-head">
+          <div class="reader-subject">ECS 实例磁盘使用率超过 80% 阈值</div>
+          <div class="reader-actions">
+            <button class="btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.5 15a9 9 0 1 0 2-9.5L1 10"/></svg>
+              刷新
+            </button>
+            <button class="btn">标记已读</button>
+            <span class="spacer"></span>
+            <button class="btn" disabled style="opacity:.5;cursor:default">回复</button>
+            <button class="btn" disabled style="opacity:.5;cursor:default">转发</button>
+          </div>
+          <div class="sender-card">
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#9b5de5,#6a36c4)">云</div>
+            <div>
+              <div class="sender-name">Aliyun 云监控</div>
+              <div class="sender-mail">monitor@notice.aliyun.com → wang.wu@outlook.com</div>
+            </div>
+            <div class="sender-date">2026-08-04 18:24</div>
+          </div>
+        </div>
+        <div class="reader-body">
+          <div class="mail-preview">
+            <h3>尊敬的用户：</h3>
+            <p>您的云服务器 ECS 实例 <strong>i-2ze42x1…</strong>（华东 1 · 杭州）当前系统盘使用率已达 <strong style="color:#d13438">84%</strong>，超过 80% 告警阈值。</p>
+            <p>为避免影响业务运行，建议您尽快清理磁盘空间或对实例进行扩容。</p>
+            <div class="receipt">
+              <div class="receipt-row"><span class="k">实例 ID</span><span>i-2ze42x1p9kq7b</span></div>
+              <div class="receipt-row"><span class="k">磁盘</span><span>/dev/vda1 · 40 GB</span></div>
+              <div class="receipt-row"><span class="k">已用</span><span>33.6 GB（84%）</span></div>
+              <div class="receipt-row total"><span>建议动作</span><span>清理 / 扩容</span></div>
+            </div>
+            <p>此邮件由云监控服务自动发送，请勿直接回复。</p>
+            <div class="readonly-note"><span class="dot"></span>只读模式：本中心不会写回或删除 Microsoft 邮箱中的任何内容</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+</html>
