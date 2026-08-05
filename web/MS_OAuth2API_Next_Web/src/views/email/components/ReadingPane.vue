@@ -71,9 +71,26 @@ defineEmits<{
 const sanitizedHtml = computed(() => {
   const html = props.bodyHtml || (props.message?.html ?? '')
   if (!html) return ''
-  return DOMPurify.sanitize(html, {
-    FORBID_TAGS: ['script', 'style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'object', 'embed', 'iframe', 'link', 'meta', 'base']
+  const sanitized = DOMPurify.sanitize(html, {
+    FORBID_TAGS: ['script', 'style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'object', 'embed', 'iframe', 'link', 'meta', 'base'],
+    FORBID_ATTR: ['srcset']
   })
+  const template = document.createElement('template')
+  template.innerHTML = sanitized
+  template.content.querySelectorAll('img').forEach((image) => {
+    const source = image.getAttribute('src') || ''
+    if (/^(https?:|\/\/|cid:)/i.test(source)) image.removeAttribute('src')
+    image.setAttribute('referrerpolicy', 'no-referrer')
+  })
+  template.content.querySelectorAll('a').forEach((link) => {
+    link.setAttribute('target', '_blank')
+    link.setAttribute('rel', 'noopener noreferrer')
+    link.setAttribute('referrerpolicy', 'no-referrer')
+  })
+  template.content.querySelectorAll<HTMLElement>('[style]').forEach((element) => {
+    if (/url\s*\(/i.test(element.getAttribute('style') || '')) element.removeAttribute('style')
+  })
+  return template.innerHTML
 })
 </script>
 

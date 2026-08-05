@@ -48,11 +48,9 @@
       <div class="option-row">
         <label>分隔符</label>
         <el-input v-model="splitSymbol" class="option-input" placeholder="----" />
-        <label>访问密码</label>
-        <el-input v-model="apiPassword" type="password" show-password class="option-input" placeholder="服务共享密码" />
       </div>
       <div class="format-hint">
-        推荐格式：<code>email----client_id----refresh_token</code>；四段格式中的第二段为访问密码，导入时会自动填入并保存到本地。
+        推荐格式：<code>email----client_id----refresh_token</code>；旧四段格式仍可导入，其中第二段访问密码会被忽略。
       </div>
     </div>
 
@@ -72,13 +70,8 @@ import type { UploadInstance, UploadProps, UploadRawFile } from 'element-plus'
 
 const visible = defineModel<boolean>({ required: true })
 
-const props = defineProps<{
-  apiPassword: string
-}>()
-
 const emit = defineEmits<{
   (e: 'imported'): void
-  (e: 'set-password', value: string): void
 }>()
 
 type ImportTab = 'file' | 'paste'
@@ -89,7 +82,6 @@ const fileName = ref('')
 const pendingLines = ref<string[]>([])
 const copyTextarea = ref('')
 const splitSymbol = ref('----')
-const apiPassword = ref(props.apiPassword)
 const importing = ref(false)
 
 const pickFile = () => {
@@ -166,8 +158,9 @@ const requestApi = async (url: string, method = 'POST', body: Record<string, unk
   try {
     const response = await fetch(url, {
       method,
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, password: apiPassword.value }),
+      body: JSON.stringify(body),
       signal: controller.signal
     })
     const data = await response.json()
@@ -205,26 +198,13 @@ const handleImport = async () => {
     return
   }
 
-  const importedPassword = rawLines
-    .map((item) => item.split(splitSymbol.value))
-    .find((parts) => parts.length >= 4)?.[1]?.trim()
-
-  let finalPassword = apiPassword.value
-  if (!finalPassword && importedPassword) {
-    finalPassword = importedPassword
-    apiPassword.value = importedPassword
-  }
-  if (!finalPassword) {
-    ElMessage.warning('请先填写访问密码')
-    return
-  }
-
   importing.value = true
   try {
-    for (const account of imported) {
-      await requestApi('/api/accounts', 'POST', account)
+    for (let index = 0; index < imported.length; index += 3) {
+      await Promise.all(
+        imported.slice(index, index + 3).map((account) => requestApi('/api/accounts', 'POST', account))
+      )
     }
-    emit('set-password', finalPassword)
     ElMessage.success(`导入成功，共 ${imported.length} 条`)
     visible.value = false
     emit('imported')

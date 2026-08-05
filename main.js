@@ -1,5 +1,4 @@
 const Koa = require('koa')
-const bodyParser = require('koa-bodyparser')
 const { koaBody } = require('koa-body')
 const path = require('path')
 const static = require('koa-static')
@@ -21,10 +20,10 @@ app.use(errorHandler)
 
 // 请求体解析
 app.use(koaBody({
-  multipart: true,
-  formidable: {
-    maxFileSize: 200 * 1024 * 1024 // 设置上传文件大小最大限制，默认2M
-  }
+  multipart: false,
+  jsonLimit: '10mb',
+  formLimit: '1mb',
+  textLimit: '1mb'
 }))
 
 // 前端资源文件
@@ -70,6 +69,10 @@ app.use(async (ctx, next) => {
 const PORT = config.port || 3000
 app.listen(PORT, () => {
   logger.info(`Server is running on http://localhost:${PORT}`)
+  if (!process.env.DATA_ENCRYPTION_KEY) {
+    logger.warn('DATA_ENCRYPTION_KEY is not configured; refresh tokens are encrypted with the service password')
+  }
+  require('./services/SyncService').startScheduler()
 })
 
 module.exports = app

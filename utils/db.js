@@ -30,6 +30,8 @@ db.exec(`
     text TEXT NOT NULL DEFAULT '',
     html TEXT NOT NULL DEFAULT '',
     date TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT 'legacy',
+    body_loaded INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(account_id, mailbox, message_key)
@@ -42,12 +44,32 @@ db.exec(`
     account_id INTEGER NOT NULL REFERENCES mail_accounts(id) ON DELETE CASCADE,
     mailbox TEXT NOT NULL CHECK (mailbox IN ('INBOX', 'Junk')),
     last_synced_at TEXT NOT NULL DEFAULT '',
+    sync_cursor TEXT NOT NULL DEFAULT '',
+    last_error TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (account_id, mailbox)
   );
 `)
 
-const encryptionSecret = process.env.DATA_ENCRYPTION_KEY || process.env.PASSWORD || 'monkey-mail-local-development-key'
-const encryptionKey = crypto.createHash('sha256').update(encryptionSecret).digest()
+const ensureColumn = (table, column, definition) => {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
+}
+
+ensureColumn('mail_messages', 'provider', "TEXT NOT NULL DEFAULT 'legacy'")
+ensureColumn('mail_messages', 'body_loaded', 'INTEGER NOT NULL DEFAULT 1')
+ensureColumn('mail_sync_state', 'sync_cursor', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('mail_sync_state', 'last_error', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('mail_sync_state', 'provider', "TEXT NOT NULL DEFAULT ''")
+
+const encryptionSecrets = [
+  process.env.DATA_ENCRYPTION_KEY,
+  process.env.PASSWORD,
+  'monkey-mail-local-development-key'
+].filter((value, index, items) => value && items.indexOf(value) === index)
+const encryptionKey = crypto.createHash('sha256').update(encryptionSecrets[0]).digest()
 
 const encrypt = (value) => {
   const iv = crypto.randomBytes(12)
@@ -61,16 +83,21 @@ const decrypt = (value) => {
   if (!String(value).startsWith('v1:')) return String(value)
 
   const [ivText, tagText, encryptedText] = String(value).slice(3).split('.')
-  const decipher = crypto.createDecipheriv(
-    'aes-256-gcm',
-    encryptionKey,
-    Buffer.from(ivText, 'base64')
-  )
-  decipher.setAuthTag(Buffer.from(tagText, 'base64'))
-  return Buffer.concat([
-    decipher.update(Buffer.from(encryptedText, 'base64')),
-    decipher.final()
-  ]).toString('utf8')
+  let lastError
+  for (const secret of encryptionSecrets) {
+    try {
+      const key = crypto.createHash('sha256').update(secret).digest()
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivText, 'base64'))
+      decipher.setAuthTag(Buffer.from(tagText, 'base64'))
+      return Buffer.concat([
+        decipher.update(Buffer.from(encryptedText, 'base64')),
+        decipher.final()
+      ]).toString('utf8')
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
 }
 
 const publicAccount = (row) => ({
@@ -83,11 +110,46 @@ const publicAccount = (row) => ({
 
 const normalizeMailbox = (mailbox) => mailbox === 'Junk' ? 'Junk' : 'INBOX'
 
-const listAccounts = () => db.prepare(`
+const listAccounts = () => {
+  const accounts = db.prepare(`
   SELECT id, email, client_id, created_at, updated_at
   FROM mail_accounts
   ORDER BY id ASC
-`).all().map(publicAccount)
+  `).all().map(publicAccount)
+  const states = db.prepare(`
+    SELECT account_id, mailbox, last_synced_at, last_error, provider
+    FROM mail_sync_state
+  `).all()
+  const counts = db.prepare(`
+    SELECT account_id, mailbox, COUNT(*) AS count
+    FROM mail_messages
+    GROUP BY account_id, mailbox
+  `).all()
+
+  return accounts.map((account) => ({
+    ...account,
+    sync: Object.fromEntries(
+      states
+        .filter((state) => state.account_id === account.id)
+        .map((state) => [state.mailbox, {
+          last_synced_at: state.last_synced_at,
+          last_error: state.last_error,
+          provider: state.provider
+        }])
+    ),
+    counts: Object.fromEntries(
+      counts
+        .filter((item) => item.account_id === account.id)
+        .map((item) => [item.mailbox, item.count])
+    )
+  }))
+}
+
+const listAccountCredentials = () => db.prepare(`
+  SELECT id, email, client_id, refresh_token, created_at, updated_at
+  FROM mail_accounts
+  ORDER BY id ASC
+`).all().map((row) => ({ ...publicAccount(row), refresh_token: decrypt(row.refresh_token) }))
 
 const getAccountCredentials = (id) => {
   const row = db.prepare(`
@@ -139,6 +201,15 @@ const upsertAccount = ({ id, email, client_id, refresh_token }) => {
 
 const deleteAccount = (id) => db.prepare('DELETE FROM mail_accounts WHERE id = ?').run(Number(id)).changes > 0
 
+const updateRefreshToken = (id, refreshToken) => {
+  if (!refreshToken) return false
+  return db.prepare(`
+    UPDATE mail_accounts
+    SET refresh_token = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(encrypt(String(refreshToken)), Number(id)).changes > 0
+}
+
 const messageKey = (message, index) => {
   if (message.id != null && String(message.id).trim()) return String(message.id).trim()
   return crypto.createHash('sha256').update(JSON.stringify([
@@ -154,14 +225,16 @@ const saveMessages = (accountId, mailbox, messages, replace = false) => {
   const normalizedMailbox = normalizeMailbox(mailbox)
   const insert = db.prepare(`
     INSERT INTO mail_messages
-      (account_id, mailbox, message_key, send, subject, text, html, date, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      (account_id, mailbox, message_key, send, subject, text, html, date, provider, body_loaded, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(account_id, mailbox, message_key) DO UPDATE SET
       send = excluded.send,
       subject = excluded.subject,
-      text = excluded.text,
-      html = excluded.html,
+      text = CASE WHEN mail_messages.body_loaded = 1 AND excluded.body_loaded = 0 THEN mail_messages.text ELSE excluded.text END,
+      html = CASE WHEN mail_messages.body_loaded = 1 AND excluded.body_loaded = 0 THEN mail_messages.html ELSE excluded.html END,
       date = excluded.date,
+      provider = excluded.provider,
+      body_loaded = MAX(mail_messages.body_loaded, excluded.body_loaded),
       updated_at = datetime('now')
   `)
   const transaction = db.transaction((items) => {
@@ -178,7 +251,9 @@ const saveMessages = (accountId, mailbox, messages, replace = false) => {
         String(message.subject || ''),
         String(message.text || ''),
         String(message.html || ''),
-        message.date ? new Date(message.date).toISOString() : ''
+        message.date && !Number.isNaN(new Date(message.date).getTime()) ? new Date(message.date).toISOString() : '',
+        String(message.provider || 'legacy'),
+        message.body_loaded === false ? 0 : 1
       )
     })
   })
@@ -187,34 +262,109 @@ const saveMessages = (accountId, mailbox, messages, replace = false) => {
 
 const replaceMessages = (accountId, mailbox, messages) => saveMessages(accountId, mailbox, messages, true)
 
-const listMessages = (accountId, mailbox) => db.prepare(`
-  SELECT message_key AS id, send, subject, substr(text, 1, 300) AS text, date
-  FROM mail_messages
-  WHERE account_id = ? AND mailbox = ?
-  ORDER BY date DESC, id DESC
-`).all(Number(accountId), normalizeMailbox(mailbox))
+const deleteMessages = (accountId, mailbox, messageKeys) => {
+  const keys = Array.isArray(messageKeys) ? messageKeys.filter(Boolean) : []
+  if (!keys.length) return 0
+  const remove = db.prepare(`
+    DELETE FROM mail_messages
+    WHERE account_id = ? AND mailbox = ? AND message_key = ?
+  `)
+  return db.transaction((items) => items.reduce(
+    (total, key) => total + remove.run(Number(accountId), normalizeMailbox(mailbox), String(key)).changes,
+    0
+  ))(keys)
+}
+
+const listMessages = ({ accountId = null, mailbox, search = '', limit = 100, offset = 0 }) => {
+  const normalizedMailbox = normalizeMailbox(mailbox)
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 100, 1), 200)
+  const normalizedOffset = Math.max(Number(offset) || 0, 0)
+  const keyword = String(search || '').trim()
+  const filters = ['m.mailbox = ?']
+  const params = [normalizedMailbox]
+
+  if (accountId != null) {
+    filters.push('m.account_id = ?')
+    params.push(Number(accountId))
+  }
+  if (keyword) {
+    filters.push("(m.send LIKE ? ESCAPE '\\' OR m.subject LIKE ? ESCAPE '\\' OR m.text LIKE ? ESCAPE '\\')")
+    const escaped = keyword.replace(/[\\%_]/g, '\\$&')
+    params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`)
+  }
+
+  const where = filters.join(' AND ')
+  const total = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM mail_messages m
+    WHERE ${where}
+  `).get(...params).count
+  const items = db.prepare(`
+    SELECT m.message_key AS id, m.account_id, a.email AS account_email,
+           m.send, m.subject, substr(m.text, 1, 300) AS text, m.date,
+           m.provider, m.body_loaded = 1 AS body_loaded
+    FROM mail_messages m
+    JOIN mail_accounts a ON a.id = m.account_id
+    WHERE ${where}
+    ORDER BY m.date DESC, m.id DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, normalizedLimit, normalizedOffset)
+
+  return {
+    items,
+    total,
+    limit: normalizedLimit,
+    offset: normalizedOffset,
+    has_more: normalizedOffset + items.length < total
+  }
+}
 
 const getMessage = (accountId, mailbox, messageKeyValue) => db.prepare(`
-  SELECT message_key AS id, send, subject, text, html, date
+  SELECT message_key AS id, account_id, mailbox, send, subject, text, html, date,
+         provider, body_loaded = 1 AS body_loaded
   FROM mail_messages
   WHERE account_id = ? AND mailbox = ? AND message_key = ?
 `).get(Number(accountId), normalizeMailbox(mailbox), String(messageKeyValue || '')) || null
 
+const saveMessageBody = (accountId, mailbox, messageKeyValue, { text = '', html = '' }) => db.prepare(`
+  UPDATE mail_messages
+  SET text = ?, html = ?, body_loaded = 1, updated_at = datetime('now')
+  WHERE account_id = ? AND mailbox = ? AND message_key = ?
+`).run(
+  String(text || ''),
+  String(html || ''),
+  Number(accountId),
+  normalizeMailbox(mailbox),
+  String(messageKeyValue || '')
+).changes > 0
+
 const getSyncState = (accountId, mailbox) => {
-  const row = db.prepare(`
-    SELECT last_synced_at
+  return db.prepare(`
+    SELECT last_synced_at, sync_cursor, last_error, provider
     FROM mail_sync_state
     WHERE account_id = ? AND mailbox = ?
   `).get(Number(accountId), normalizeMailbox(mailbox))
-  return row?.last_synced_at || ''
+    || { last_synced_at: '', sync_cursor: '', last_error: '', provider: '' }
 }
 
-const setSyncState = (accountId, mailbox, lastSyncedAt) => {
+const setSyncState = (accountId, mailbox, state = {}) => {
+  const current = getSyncState(accountId, mailbox)
   db.prepare(`
-    INSERT INTO mail_sync_state (account_id, mailbox, last_synced_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(account_id, mailbox) DO UPDATE SET last_synced_at = excluded.last_synced_at
-  `).run(Number(accountId), normalizeMailbox(mailbox), String(lastSyncedAt || ''))
+    INSERT INTO mail_sync_state (account_id, mailbox, last_synced_at, sync_cursor, last_error, provider)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_id, mailbox) DO UPDATE SET
+      last_synced_at = excluded.last_synced_at,
+      sync_cursor = excluded.sync_cursor,
+      last_error = excluded.last_error,
+      provider = excluded.provider
+  `).run(
+    Number(accountId),
+    normalizeMailbox(mailbox),
+    String(state.last_synced_at ?? current.last_synced_at ?? ''),
+    String(state.sync_cursor ?? current.sync_cursor ?? ''),
+    String(state.last_error ?? current.last_error ?? ''),
+    String(state.provider ?? current.provider ?? '')
+  )
 }
 
 const close = () => {
@@ -224,13 +374,17 @@ const close = () => {
 module.exports = {
   databasePath,
   listAccounts,
+  listAccountCredentials,
   getAccountCredentials,
   upsertAccount,
   deleteAccount,
+  updateRefreshToken,
   replaceMessages,
   saveMessages,
+  deleteMessages,
   listMessages,
   getMessage,
+  saveMessageBody,
   getSyncState,
   setSyncState,
   close

@@ -71,5 +71,7 @@ export const domainLabel = (email: string): string => {
   return at > 0 ? lower.slice(at + 1) : '邮箱'
 }
 
-export const messageKey = (message: { id?: string; send?: string; date?: string; subject?: string }): string =>
-  message.id || `${message.send || ''}|${message.date || ''}|${message.subject || ''}`
+export const messageKey = (message: { account_id?: number; id?: string; send?: string; date?: string; subject?: string }): string => {
+  const id = message.id || `${message.send || ''}|${message.date || ''}|${message.subject || ''}`
+  return message.account_id == null ? id : `${message.account_id}:${id}`
+}

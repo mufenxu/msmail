@@ -1,75 +1,33 @@
-const service = require('../services/api')
-const logger = require('../utils/logger')
-const store = require('../utils/db')
-
-const getMailRequest = (ctx) => ctx.method === 'GET' ? ctx.query : ctx.request.body
-
-const resolveAccount = (request) => {
-  if (request.account_id != null) {
-    const account = store.getAccountCredentials(request.account_id)
-    if (!account) {
-      const error = new Error('邮箱账号不存在')
-      error.status = 404
-      throw error
-    }
-    return account
-  }
-
-  if (!request.refresh_token || !request.client_id || !request.email || !request.mailbox) {
-    const error = new Error('缺少邮箱收取参数')
-    error.status = 400
-    throw error
-  }
-
-  return request
-}
+const mailService = require('../services/api')
+const syncService = require('../services/SyncService')
 
 const controller = {
-  async mail_all(ctx) {
-    try {
-      const request = getMailRequest(ctx)
-      const account = resolveAccount(request)
-      const since = account.id ? store.getSyncState(account.id, request.mailbox) : ''
-      const syncStartedAt = new Date().toISOString()
-      const data = await service.mail_all(account.refresh_token, account.client_id, account.email, request.mailbox, request.socks5, request.http, since)
-      if (account.id) {
-        if (Array.isArray(data) && data.length > 0) {
-          store.saveMessages(account.id, request.mailbox, data)
-        }
-        store.setSyncState(account.id, request.mailbox, syncStartedAt)
-        ctx.body = { code: "200", data: store.listMessages(account.id, request.mailbox) }
-      } else {
-        ctx.body = { code: "200", data }
+  async sync(ctx) {
+    const { account_id: accountId, mailbox, socks5, http } = ctx.request.body || {}
+    if (accountId == null) ctx.throw(400, '缺少 account_id')
+    const data = await syncService.syncAccount(accountId, mailbox, { socks5, http })
+    ctx.body = { code: 200, data }
+  },
+
+  async syncAll(ctx) {
+    const body = ctx.request.body || {}
+    const mailboxes = body.mailbox ? [syncService.normalizeMailbox(body.mailbox)] : ['INBOX', 'Junk']
+    const results = await syncService.syncAll({ mailboxes })
+    ctx.body = {
+      code: 200,
+      data: {
+        results,
+        succeeded: results.filter((result) => result.ok).length,
+        failed: results.filter((result) => !result.ok).length
       }
-    } catch (err) {
-      logger.error('Failed to mail_all', err)
-      ctx.throw(500, err.message || 'Failed to mail_all')
     }
   },
 
-  async mail_new(ctx) {
-    try {
-      const request = getMailRequest(ctx)
-      const account = resolveAccount(request)
-      const data = await service.mail_new(account.refresh_token, account.client_id, account.email, request.mailbox, request.socks5, request.http)
-      if (account.id) store.saveMessages(account.id, request.mailbox, data)
-      ctx.body = { code: "200", data }
-    } catch (err) {
-      logger.error('Failed to mail_new', err)
-      ctx.throw(500, err.message || 'Failed to mail_new')
-    }
-  },
-
-  async test_proxy(ctx) {
-    try {
-      const { socks5, http } = ctx.method === "GET" ? ctx.query : ctx.request.body;
-      const data = await service.test_proxy(socks5, http)
-      ctx.body = { code: "200", data }
-    } catch (err) {
-      logger.error('Failed to test_proxy', err)
-      ctx.throw(500, 'Failed to test_proxy')
-    }
-  },
+  async testProxy(ctx) {
+    const { socks5, http } = ctx.request.body || {}
+    const data = await mailService.testProxy(socks5, http)
+    ctx.body = { code: 200, data }
+  }
 }
 
 module.exports = controller

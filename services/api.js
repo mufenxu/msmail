@@ -1,69 +1,96 @@
 const logger = require('../utils/logger')
-const { use_graph_api, use_get_graph_emails, use_imap_api, generateAuthString, use_get_imap_emails, use_test_proxy } = require('../services/MailService')
+const {
+  use_graph_api,
+  use_get_graph_emails,
+  use_get_graph_message_body,
+  use_imap_api,
+  generateAuthString,
+  use_get_imap_emails,
+  use_test_proxy
+} = require('./MailService')
 
-const createMailError = (err) => {
-  const message = err?.message || ''
-  const authFailure = message.includes('AADSTS') || /HTTP error! status: (400|401|403)/.test(message)
-  const publicMessage = authFailure
+const createMailError = (error) => {
+  const status = Number(error?.status || error?.cause?.status || 0)
+  const message = String(error?.message || '')
+  const authFailure = [400, 401, 403].includes(status) || message.includes('AADSTS')
+  const wrapped = new Error(authFailure
     ? 'Microsoft OAuth 授权失败，请检查 refresh_token、client_id 及邮箱读取权限。'
-    : 'Microsoft 邮箱服务暂时不可用，请稍后重试。'
-  const wrappedError = new Error(publicMessage)
-  wrappedError.cause = err
-  return wrappedError
+    : 'Microsoft 邮箱服务暂时不可用，请稍后重试。')
+  wrapped.status = authFailure ? 401 : 502
+  wrapped.cause = error
+  return wrapped
 }
 
 const service = {
-  async mail_all(refresh_token, client_id, email, mailbox, socks5, http, since = '') {
+  async syncMailbox(account, mailbox, state = {}, socks5, http) {
+    let refreshToken = account.refresh_token
     try {
+      const graph = await use_graph_api(refreshToken, account.client_id, mailbox, account.email, socks5, http)
+      if (graph.refresh_token) refreshToken = graph.refresh_token
 
-      const graph_api_result = await use_graph_api(refresh_token, client_id, mailbox, email, socks5, http)
-
-      if (graph_api_result.status) {
-        const graph_emails = await use_get_graph_emails(graph_api_result, since ? 500 : undefined, email, socks5, http, since)
-        return graph_emails
+      if (graph.status) {
+        try {
+          const cursor = state.provider === 'graph' ? state.sync_cursor : ''
+          let graphData
+          try {
+            graphData = await use_get_graph_emails(graph, cursor, socks5, http)
+          } catch (cursorError) {
+            if (!cursor) throw cursorError
+            logger.warn(`Graph cursor expired for ${account.email}; starting a full delta sync`)
+            graphData = await use_get_graph_emails(graph, '', socks5, http)
+          }
+          return { ...graphData, provider: 'graph', refresh_token: refreshToken }
+        } catch (graphError) {
+          logger.warn(`Graph message sync failed for ${account.email}; using IMAP fallback`, graphError)
+        }
       }
 
-      const imap_api_result = await use_imap_api(refresh_token, client_id, email, socks5, http)
-      const authString = generateAuthString(email, imap_api_result.access_token)
-      const imap_emails = await use_get_imap_emails(email, authString, mailbox, since ? 500 : undefined, socks5, http, since)
-
-      return imap_emails
-    } catch (err) {
-      logger.error('Service error when mail_all', err)
-      throw createMailError(err)
-    }
-  },
-
-  async mail_new(refresh_token, client_id, email, mailbox, socks5, http) {
-    try {
-
-      const graph_api_result = await use_graph_api(refresh_token, client_id, mailbox, email, socks5, http)
-
-      if (graph_api_result.status) {
-        const graph_emails = await use_get_graph_emails(graph_api_result, 1, email, socks5, http)
-        return graph_emails
+      const imap = await use_imap_api(refreshToken, account.client_id, account.email, socks5, http)
+      const authString = generateAuthString(account.email, imap.access_token)
+      const messages = await use_get_imap_emails(
+        account.email,
+        authString,
+        mailbox,
+        state.last_synced_at ? 500 : 10000,
+        socks5,
+        http,
+        state.last_synced_at
+      )
+      return {
+        messages,
+        removed: [],
+        cursor: '',
+        provider: 'imap',
+        refresh_token: imap.refresh_token || refreshToken
       }
-
-      const imap_api_result = await use_imap_api(refresh_token, client_id, email, socks5, http)
-      const authString = generateAuthString(email, imap_api_result.access_token)
-      const imap_emails = await use_get_imap_emails(email, authString, mailbox, 1, socks5, http)
-
-      return imap_emails
-    } catch (err) {
-      logger.error('Service error when mail_new', err)
-      throw createMailError(err)
+    } catch (error) {
+      logger.error(`Mailbox sync failed for ${account.email}`, error)
+      throw createMailError(error)
     }
   },
 
-  async test_proxy(socks5, http) {
+  async loadGraphBody(account, mailbox, messageId, socks5, http) {
     try {
-      const data = await use_test_proxy(socks5, http)
-      return data
-    } catch (err) {
-      logger.error('Service error when test_proxy', err)
-      throw new Error('Failed to test_proxy')
+      const graph = await use_graph_api(account.refresh_token, account.client_id, mailbox, account.email, socks5, http)
+      if (!graph.status) throw graph.error || new Error('Mail.Read permission is unavailable')
+      const body = await use_get_graph_message_body(graph, messageId, socks5, http)
+      return { ...body, refresh_token: graph.refresh_token }
+    } catch (error) {
+      logger.error(`Graph body load failed for ${account.email}`, error)
+      throw createMailError(error)
     }
   },
+
+  async testProxy(socks5, http) {
+    try {
+      return await use_test_proxy(socks5, http)
+    } catch (error) {
+      logger.error('Proxy test failed', error)
+      const wrapped = new Error('代理连接测试失败')
+      wrapped.status = 502
+      throw wrapped
+    }
+  }
 }
 
 module.exports = service

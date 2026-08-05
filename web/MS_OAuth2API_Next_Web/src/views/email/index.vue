@@ -23,7 +23,7 @@
       <div class="topbar-right">
         <button class="pill" :class="passwordSet ? 'ok' : 'warn'" @click="openPasswordDialog">
           <span class="dot"></span>
-          {{ passwordSet ? '访问密码已配置' : '未配置访问密码' }}
+          {{ passwordSet ? '已安全登录' : '需要登录' }}
         </button>
         <div class="top-avatar">管</div>
       </div>
@@ -54,21 +54,27 @@
         :has-account="hasAccount"
         :list-loading="listLoading"
         :receive-loading="receiveLoading"
+        :unified="selectedAccountId === null"
+        :total="totalMessages"
+        :limit="pageLimit"
+        :offset="pageOffset"
+        :has-more="hasMore"
         @receive="handleReceive"
         @refresh="handleRefreshList"
         @select="selectMessage"
+        @page="handlePage"
       />
       <ReadingPane
         :message="selectedMessage"
         :body-html="bodyHtml"
         :body-text="bodyText"
         :body-loading="bodyLoading"
-        :account-email="selectedAccount?.email ?? ''"
+        :account-email="selectedMessage?.account_email ?? selectedAccount?.email ?? ''"
         @close="selectedMessageId = null"
       />
     </div>
 
-    <ImportDialog v-model="importDialogVisible" :api-password="apiPassword" @imported="handleImported" @set-password="handleSetPassword" />
+    <ImportDialog v-model="importDialogVisible" @imported="handleImported" />
     <AccountManager
       v-model="managerVisible"
       :accounts="accounts"
@@ -96,8 +102,8 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="passwordDialogVisible" title="访问密码" width="420" class="mm-dialog" append-to-body>
-      <p class="dialog-desc">用于调用服务端业务接口的共享密码，仅保存在当前浏览器本地。</p>
+    <el-dialog v-model="passwordDialogVisible" title="登录 Monkey Mail" width="420" class="mm-dialog" append-to-body>
+      <p class="dialog-desc">输入服务访问密码以建立安全会话，密码不会保存在浏览器本地存储中。</p>
       <el-input
         v-model="passwordInput"
         type="password"
@@ -107,16 +113,16 @@
       />
       <template #footer>
         <el-button @click="passwordDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSavePassword">保存</el-button>
+        <el-button type="primary" :loading="loginLoading" @click="handleSavePassword">登录</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Account, Mailbox, MailboxCounts, Message } from '@/types'
+import type { Account, Mailbox, MailboxCounts, Message, MessagePage } from '@/types'
 import { messageKey } from '@/utils/format'
 import EmailSidebar from './components/EmailSidebar.vue'
 import MessageList from './components/MessageList.vue'
@@ -124,8 +130,8 @@ import ReadingPane from './components/ReadingPane.vue'
 import ImportDialog from './components/ImportDialog.vue'
 import AccountManager from './components/AccountManager.vue'
 
-const apiPassword = ref(localStorage.getItem('monkey-mail-api-password') || '')
-const passwordSet = computed(() => apiPassword.value.length > 0)
+const authenticated = ref(false)
+const passwordSet = computed(() => authenticated.value)
 
 const requestApi = async (url: string, method = 'POST', body: Record<string, unknown> = {}, timeoutMs = 60000) => {
   const controller = new AbortController()
@@ -133,12 +139,14 @@ const requestApi = async (url: string, method = 'POST', body: Record<string, unk
   try {
     const response = await fetch(url, {
       method,
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, password: apiPassword.value }),
+      body: method === 'GET' ? undefined : JSON.stringify(body),
       signal: controller.signal
     })
     const data = await response.json()
     if (!response.ok || data.code != 200) {
+      if (response.status === 401) authenticated.value = false
       throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`)
     }
     return data.data
@@ -153,18 +161,24 @@ const requestApi = async (url: string, method = 'POST', body: Record<string, unk
 }
 
 // ---------- 旧版本地数据迁移 ----------
-const storedMailList = JSON.parse(localStorage.getItem('localMailList') || '[]') as Array<Partial<Account> & { password?: string }>
-const legacyPassword = storedMailList.find((item) => item.password)?.password || ''
-if (legacyPassword && !localStorage.getItem('monkey-mail-api-password')) {
-  localStorage.setItem('monkey-mail-api-password', legacyPassword)
-  apiPassword.value = legacyPassword
+const readLegacyAccounts = (): Array<Partial<Account> & { password?: string }> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('localMailList') || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
 }
+
+const storedMailList = readLegacyAccounts()
+let legacyPassword = localStorage.getItem('monkey-mail-api-password') || storedMailList.find((item) => item.password)?.password || ''
+localStorage.removeItem('monkey-mail-api-password')
 const legacyMailList = storedMailList.map((item) => ({
   email: item.email || '',
   client_id: item.client_id || '',
   refresh_token: item.refresh_token || ''
 }))
-if (storedMailList.some((item) => item.password)) {
+if (storedMailList.length) {
   localStorage.setItem('localMailList', JSON.stringify(legacyMailList))
 }
 
@@ -196,6 +210,8 @@ const migrateLocalData = async () => {
     localStorage.removeItem(account.email + 'INBOX')
     localStorage.removeItem(account.email + 'Junk')
   })
+  storedMailList.length = 0
+  legacyMailList.length = 0
 }
 
 // ---------- 账号 ----------
@@ -204,7 +220,7 @@ const selectedAccountId = ref<number | null>(null)
 const selectedAccount = computed(() => accounts.value.find((a) => a.id === selectedAccountId.value) ?? null)
 const hasAccount = computed(() => accounts.value.length > 0)
 
-const loadAccounts = async () => {
+const loadAccounts = async (reloadMessages = true) => {
   if (!passwordSet.value) {
     accounts.value = []
     selectedAccountId.value = null
@@ -213,22 +229,32 @@ const loadAccounts = async () => {
   }
   try {
     let list = (await requestApi('/api/accounts/list')) as Account[]
-    if (list.length === 0 && legacyMailList.length > 0) {
+    if (legacyMailList.length > 0) {
       await migrateLocalData()
       list = (await requestApi('/api/accounts/list')) as Account[]
       if (list.length > 0) ElMessage.success('本地邮箱数据已迁移到服务端')
     }
     accounts.value = list
+    counts.value = Object.fromEntries(list.map((account) => [accountKey(account), {
+      INBOX: account.counts?.INBOX ?? null,
+      Junk: account.counts?.Junk ?? null
+    }]))
+    const syncDates = list.flatMap((account) => Object.values(account.sync || {}).map((state) => state?.last_synced_at || ''))
+    const sortedSyncDates = syncDates.filter(Boolean).sort()
+    const latestSync = sortedSyncDates[sortedSyncDates.length - 1]
+    lastSync.value = latestSync
+      ? new Date(latestSync).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : ''
     if (!list.length) {
       selectedAccountId.value = null
       messages.value = []
-    } else if (!list.some((a) => a.id === selectedAccountId.value)) {
-      const first = list[0]
-      if (first) await handleSelectAccount(first)
+    } else if (selectedAccountId.value !== null && !list.some((a) => a.id === selectedAccountId.value)) {
+      selectedAccountId.value = null
     }
+    if (reloadMessages && list.length) await loadMessages(true)
   } catch (error) {
     console.warn('加载服务端账号失败:', error)
-    accounts.value = [...legacyMailList]
+    accounts.value = []
   }
 }
 
@@ -246,19 +272,16 @@ const bodyHtml = ref('')
 const bodyText = ref('')
 const bodyLoading = ref(false)
 const bodyCache = ref<Record<string, { html: string; text: string }>>({})
+const pageLimit = 100
+const pageOffset = ref(0)
+const totalMessages = ref(0)
+const hasMore = ref(false)
 
 const accountKey = (account: Account) => String(account.id ?? account.email)
 
-const updateCount = (account: Account, mailbox: Mailbox, count: number) => {
-  const key = accountKey(account)
-  const current = counts.value[key] ?? { INBOX: null, Junk: null }
-  const next = { ...current }
-  next[mailbox] = count
-  counts.value = { ...counts.value, [key]: next }
-}
-
-const handleSelectAccount = async (account: Account) => {
-  selectedAccountId.value = account.id ?? null
+const handleSelectAccount = async (account: Account | null) => {
+  selectedAccountId.value = account?.id ?? null
+  pageOffset.value = 0
   selectedMessageId.value = null
   clearBody()
   messages.value = []
@@ -268,6 +291,7 @@ const handleSelectAccount = async (account: Account) => {
 const handleSwitchFolder = async (mailbox: Mailbox) => {
   if (mailbox === folder.value) return
   folder.value = mailbox
+  pageOffset.value = 0
   selectedMessageId.value = null
   clearBody()
   messages.value = []
@@ -275,21 +299,23 @@ const handleSwitchFolder = async (mailbox: Mailbox) => {
 }
 
 const loadMessages = async (fromCache = true) => {
-  const account = selectedAccount.value
-  if (!account) return
-  if (account.id == null) {
-    messages.value = JSON.parse(localStorage.getItem(account.email + folder.value) || '[]')
-    updateCount(account, folder.value, messages.value.length)
-    autoSelectFirst()
-    return
-  }
+  if (!hasAccount.value || !passwordSet.value) return
   if (!fromCache) return
   listLoading.value = true
   try {
-    const list = (await requestApi(`/api/accounts/${account.id}/messages/list`, 'POST', { mailbox: folder.value })) as Message[]
-    messages.value = list
-    updateCount(account, folder.value, list.length)
-    autoSelectFirst()
+    const endpoint = selectedAccountId.value === null
+      ? '/api/messages/list'
+      : `/api/accounts/${selectedAccountId.value}/messages/list`
+    const page = (await requestApi(endpoint, 'POST', {
+      mailbox: folder.value,
+      search: searchKeyword.value,
+      limit: pageLimit,
+      offset: pageOffset.value
+    })) as MessagePage
+    messages.value = page.items
+    totalMessages.value = page.total
+    hasMore.value = page.has_more
+    await autoSelectFirst()
   } catch (error) {
     console.warn('加载邮件缓存失败:', error)
   } finally {
@@ -310,28 +336,31 @@ const autoSelectFirst = async () => {
 }
 
 const handleReceive = async () => {
-  const account = selectedAccount.value
-  if (!account) return
+  if (!hasAccount.value) return
   if (!passwordSet.value) {
-    ElMessage.warning('请先配置访问密码')
+    ElMessage.warning('请先登录')
     return
   }
   receiveLoading.value = true
   try {
-    const payload: Record<string, unknown> = { mailbox: folder.value }
-    if (account.id != null) {
-      payload.account_id = account.id
+    if (selectedAccountId.value === null) {
+      const result = (await requestApi('/api/sync/all', 'POST', { mailbox: folder.value }, 10 * 60 * 1000)) as {
+        succeeded: number
+        failed: number
+      }
+      if (result.failed) ElMessage.warning(`同步完成：成功 ${result.succeeded}，失败 ${result.failed}`)
+      else ElMessage.success(`已同步 ${result.succeeded} 个邮箱`)
     } else {
-      payload.email = account.email
-      payload.client_id = account.client_id
-      payload.refresh_token = account.refresh_token
+      await requestApi('/api/sync', 'POST', {
+        account_id: selectedAccountId.value,
+        mailbox: folder.value
+      }, 5 * 60 * 1000)
+      ElMessage.success('收取成功')
     }
-    const list = (await requestApi('/api/mail_all', 'POST', payload, 120000)) as Message[]
-    messages.value = list
-    updateCount(account, folder.value, list.length)
-    await autoSelectFirst()
+    pageOffset.value = 0
+    await loadAccounts(false)
+    await loadMessages(true)
     lastSync.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    ElMessage.success('收取成功')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '收取失败')
   } finally {
@@ -341,6 +370,13 @@ const handleReceive = async () => {
 
 const handleRefreshList = () => {
   loadMessages(true)
+}
+
+const handlePage = async (offset: number) => {
+  pageOffset.value = Math.max(offset, 0)
+  selectedMessageId.value = null
+  clearBody()
+  await loadMessages(true)
 }
 
 const selectMessage = async (message: Message) => {
@@ -356,7 +392,8 @@ const clearBody = () => {
 
 const loadBody = async (message: Message) => {
   const account = selectedAccount.value
-  const cacheKey = `${account?.id ?? account?.email ?? 'legacy'}:${messageKey(message)}`
+  const messageAccountId = message.account_id ?? account?.id
+  const cacheKey = `${messageAccountId ?? 'legacy'}:${folder.value}:${messageKey(message)}`
   const cached = bodyCache.value[cacheKey]
   if (cached) {
     bodyHtml.value = cached.html
@@ -375,8 +412,8 @@ const loadBody = async (message: Message) => {
   bodyHtml.value = ''
   bodyText.value = ''
   try {
-    if (account?.id != null) {
-      const body = (await requestApi(`/api/accounts/${account.id}/messages/body`, 'POST', {
+    if (messageAccountId != null) {
+      const body = (await requestApi(`/api/accounts/${messageAccountId}/messages/body`, 'POST', {
         mailbox: folder.value,
         id: message.id
       })) as { html: string; text: string }
@@ -499,28 +536,45 @@ const handleDeleteAccounts = (list: Account[]) => {
 // ---------- 访问密码 ----------
 const passwordDialogVisible = ref(false)
 const passwordInput = ref('')
+const loginLoading = ref(false)
 
 const openPasswordDialog = () => {
-  passwordInput.value = apiPassword.value
+  passwordInput.value = ''
   passwordDialogVisible.value = true
 }
 
-const handleSavePassword = () => {
+const loginWithPassword = async (password: string) => {
+  const response = await fetch('/api/session', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password })
+  })
+  const data = await response.json()
+  if (!response.ok || data.code != 200) {
+    throw new Error(data.error || data.message || '登录失败')
+  }
+  authenticated.value = true
+}
+
+const handleSavePassword = async () => {
   const value = passwordInput.value.trim()
   if (!value) {
     ElMessage.warning('请输入访问密码')
     return
   }
-  apiPassword.value = value
-  localStorage.setItem('monkey-mail-api-password', value)
-  passwordDialogVisible.value = false
-  loadAccounts()
-  ElMessage.success('访问密码已保存')
-}
-
-const handleSetPassword = (value: string) => {
-  apiPassword.value = value
-  localStorage.setItem('monkey-mail-api-password', value)
+  loginLoading.value = true
+  try {
+    await loginWithPassword(value)
+    passwordInput.value = ''
+    passwordDialogVisible.value = false
+    await loadAccounts()
+    ElMessage.success('登录成功')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '登录失败')
+  } finally {
+    loginLoading.value = false
+  }
 }
 
 // ---------- 导入 ----------
@@ -531,8 +585,43 @@ const handleImported = () => {
   loadAccounts()
 }
 
+let searchTimer: number | undefined
+watch(searchKeyword, () => {
+  window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => {
+    pageOffset.value = 0
+    selectedMessageId.value = null
+    clearBody()
+    loadMessages(true)
+  }, 300)
+})
+
+const initialize = async () => {
+  try {
+    const status = (await requestApi('/api/session/status', 'GET')) as { configured: boolean; authenticated: boolean }
+    authenticated.value = status.authenticated
+    if (!status.configured) {
+      ElMessage.error('服务端尚未配置 PASSWORD')
+      return
+    }
+    if (!authenticated.value && legacyPassword) {
+      try {
+        await loginWithPassword(legacyPassword)
+      } catch {
+        authenticated.value = false
+      } finally {
+        legacyPassword = ''
+      }
+    }
+    if (authenticated.value) await loadAccounts()
+    else passwordDialogVisible.value = true
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '无法连接服务端')
+  }
+}
+
 onMounted(() => {
-  loadAccounts()
+  initialize()
 })
 </script>
 

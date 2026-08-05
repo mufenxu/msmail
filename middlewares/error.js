@@ -11,7 +11,7 @@ module.exports = async (ctx, next) => {
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     }
     
-    logger.error(`${err.status || 500} - ${err.message} - ${ctx.originalUrl} - ${ctx.method} - ${ctx.ip}`)
+    logger.error(`${err.status || 500} - ${err.message} - ${ctx.path} - ${ctx.method} - ${ctx.ip}`)
     logger.error(err.stack)
   }
 }

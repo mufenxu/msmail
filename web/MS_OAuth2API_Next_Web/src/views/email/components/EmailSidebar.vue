@@ -10,10 +10,22 @@
     </div>
 
     <div v-if="!passwordSet" class="side-empty">
-      <p>配置访问密码后即可加载账号</p>
-      <button class="link-btn" @click="$emit('configure-password')">去配置</button>
+      <p>登录后即可加载账号</p>
+      <button class="link-btn" @click="$emit('configure-password')">去登录</button>
     </div>
     <template v-else>
+      <div
+        v-if="accounts.length"
+        class="account-item unified-item"
+        :class="{ active: selectedAccountId === null }"
+        @click="$emit('select', null)"
+      >
+        <div class="acc-avatar unified-avatar">全</div>
+        <div class="acc-body">
+          <div class="account-email">统一收件箱</div>
+          <div class="account-meta"><span>{{ accounts.length }} 个账号</span></div>
+        </div>
+      </div>
       <div
         v-for="account in accounts"
         :key="account.id ?? account.email"
@@ -24,7 +36,7 @@
         <div class="acc-avatar" :style="avatarStyle(account.email)">{{ senderInitial(account.email) }}</div>
         <div class="acc-body">
           <div class="account-email" :title="account.email">{{ account.email }}</div>
-          <div class="account-meta">
+          <div class="account-meta" :title="syncTitle(account)">
             <span v-for="part in metaParts(account)" :key="part">{{ part }}</span>
           </div>
         </div>
@@ -71,7 +83,7 @@
         <span>{{ syncText }}</span>
       </div>
       <div class="footer-actions">
-        <button class="link-btn" @click="$emit('configure-password')">访问密码</button>
+        <button class="link-btn" @click="$emit('configure-password')">登录</button>
         <button class="link-btn" @click="$emit('manage')">管理账号</button>
       </div>
     </div>
@@ -93,7 +105,7 @@ const props = defineProps<{
 }>()
 
 defineEmits<{
-  (e: 'select', account: Account): void
+  (e: 'select', account: Account | null): void
   (e: 'add'): void
   (e: 'edit', account: Account): void
   (e: 'remove', account: Account): void
@@ -111,10 +123,23 @@ const metaParts = (account: Account): string[] => {
     if (accountCountsValue.INBOX != null) parts.push(`收件箱 ${accountCountsValue.INBOX}`)
     if (accountCountsValue.Junk != null) parts.push(`垃圾 ${accountCountsValue.Junk}`)
   }
+  const state = account.sync?.[props.folder]
+  if (state?.last_error) parts.push('同步异常')
+  else if (state?.provider) parts.push(state.provider.toUpperCase())
   return parts
 }
 
+const syncTitle = (account: Account): string => {
+  const state = account.sync?.[props.folder]
+  if (state?.last_error) return state.last_error
+  if (state?.last_synced_at) return `上次成功：${new Date(state.last_synced_at).toLocaleString('zh-CN')}`
+  return '尚未同步'
+}
+
 const folderCount = (mailbox: Mailbox): string | number => {
+  if (props.selectedAccountId === null) {
+    return props.accounts.reduce((total, account) => total + (account.counts?.[mailbox] || 0), 0)
+  }
   const account = props.accounts.find((a) => a.id === props.selectedAccountId)
   if (!account) return '—'
   const counts = props.counts[accountKey(account)]
@@ -122,7 +147,7 @@ const folderCount = (mailbox: Mailbox): string | number => {
 }
 
 const syncText = computed(() => {
-  if (!props.passwordSet) return '未配置访问密码'
+  if (!props.passwordSet) return '尚未登录'
   if (props.lastSync) return `上次同步 ${props.lastSync}`
   return '尚未同步'
 })
@@ -201,6 +226,10 @@ const syncText = computed(() => {
   color: #fff;
   font-size: 13px;
   font-weight: 700;
+}
+
+.unified-avatar {
+  background: #374151;
 }
 
 .acc-body {

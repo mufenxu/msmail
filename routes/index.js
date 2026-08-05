@@ -1,6 +1,6 @@
 const Router = require("koa-router");
 const apiRoutes = require("./api");
-const { authPasswordMiddleware } = require("../middlewares/auth.middleware");
+const { login, logout, status, authPasswordMiddleware } = require("../middlewares/auth.middleware");
 
 const router = new Router();
 
@@ -17,6 +17,10 @@ router.get("/api/health", async (ctx) => {
     service: process.env.API_NAME || "Monkey Mail",
   };
 });
+
+router.post('/api/session', login)
+router.post('/api/session/logout', logout)
+router.get('/api/session/status', status)
 
 // API路由
 router.use(

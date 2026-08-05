@@ -19,7 +19,7 @@ const SocksAgent = (socks5) => {
     if (!normalizedUrl.startsWith('socks5://')) {
         if (!normalizedUrl.includes('://')) {
             normalizedUrl = `socks5://${normalizedUrl}`;
-            console.warn(`[SocksAgent] 警告: 自动添加协议前缀 -> ${normalizedUrl}`);
+            console.warn('[SocksAgent] 警告: 已自动添加 socks5:// 协议前缀');
         } else {
             console.error('[SocksAgent] 错误: 仅支持 SOCKS5 协议');
             return null;
@@ -67,7 +67,6 @@ const SocksAgent = (socks5) => {
 
     } catch (error) {
         console.error('[SocksAgent] 创建代理失败:', error.message);
-        console.error('[SocksAgent] 原始URL:', socks5);
         return null;
     }
 }

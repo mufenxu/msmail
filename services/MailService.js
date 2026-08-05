@@ -1,303 +1,337 @@
-const Imap = require('node-imap');
-const simpleParser = require("mailparser").simpleParser;
-const { autoAgent } = require('./ProxyService');
-const oauthTenant = process.env.MS_TENANT || 'common';
-const tokenEndpoint = `https://login.microsoftonline.com/${oauthTenant}/oauth2/v2.0/token`;
+const Imap = require('node-imap')
+const net = require('node:net')
+const { simpleParser } = require('mailparser')
+const { SocksClient } = require('socks')
+const { autoAgent } = require('./ProxyService')
 
-const use_graph_api = async (refresh_token, client_id, mailbox, email, socks5, http) => {
+const oauthTenant = process.env.MS_TENANT || 'common'
+const tokenEndpoint = `https://login.microsoftonline.com/${oauthTenant}/oauth2/v2.0/token`
+const graphBaseUrl = 'https://graph.microsoft.com/v1.0'
 
-    let temp_mailbox = mailbox
-    if (mailbox != "INBOX" && mailbox != "Junk") {
-        temp_mailbox = "inbox";
-    }
+const mailboxName = (mailbox) => mailbox === 'Junk' ? 'junkemail' : 'inbox'
 
-    if (mailbox == 'INBOX') {
-        temp_mailbox = 'inbox';
-    }
+const tokenRequest = async (refreshToken, clientId, scope, socks5, http) => {
+  const agentOptions = autoAgent(socks5, http)
+  const response = await agentOptions.fetch(tokenEndpoint, {
+    method: 'POST',
+    ...agentOptions.proxy,
+    signal: AbortSignal.timeout(30000),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      scope
+    }).toString()
+  })
 
-    if (mailbox == 'Junk') {
-        temp_mailbox = 'junkemail';
-    }
+  if (!response.ok) {
+    const error = new Error(`Microsoft token request failed with status ${response.status}`)
+    error.status = response.status
+    throw error
+  }
 
-    const agentOptions = autoAgent(socks5, http);
-
-    let response;
-    try {
-        response = await agentOptions.fetch(tokenEndpoint, {
-            method: 'POST',
-            ...agentOptions.proxy,
-            signal: AbortSignal.timeout(30000),
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-                'client_id': client_id,
-                'grant_type': 'refresh_token',
-                'refresh_token': refresh_token,
-                'scope': 'https://graph.microsoft.com/.default'
-            }).toString()
-        });
-    } catch (error) {
-        console.warn('Graph token request failed, falling back to IMAP:', error.message);
-        return {
-            status: false,
-            mailbox: temp_mailbox
-        };
-    }
-
-    if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`Graph token request returned ${response.status}, falling back to IMAP: ${errorText}`);
-        return {
-            status: false,
-            mailbox: temp_mailbox
-        };
-    }
-
-    const responseText = await response.text();
-
-    try {
-
-        const data = JSON.parse(responseText);
-        const grantedScopes = data.scope || ''
-        const status = grantedScopes.includes('Mail.Read') || grantedScopes.includes('https://graph.microsoft.com/Mail.Read')
-
-        return {
-            access_token: data.access_token,
-            status: status,
-            mailbox: temp_mailbox
-        }
-    } catch (parseError) {
-        throw new Error(`Failed to parse JSON: ${parseError.message}, response: ${responseText}`);
-    }
+  return response.json()
 }
 
-const use_get_graph_emails = async (graph_api_result, top = 10000, email, socks5, http, since = '') => {
-
-    try {
-
-        const agentOptions = autoAgent(socks5, http);
-
-        const params = new URLSearchParams();
-        params.set('$top', String(top));
-        params.set('$select', 'id,from,subject,bodyPreview,body,createdDateTime');
-        if (since) {
-            params.set('$filter', `createdDateTime ge ${since}`);
-        }
-
-        const url = `https://graph.microsoft.com/v1.0/me/mailFolders/${graph_api_result.mailbox}/messages?${params.toString()}`;
-
-        const response = await agentOptions.fetch(url, {
-            method: 'GET',
-            ...agentOptions.proxy,
-            signal: AbortSignal.timeout(60000),
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                "Authorization": `Bearer ${graph_api_result.access_token}`
-            },
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`HTTP error! status: ${response.status}, response: ${errorText}`);
-        }
-
-        const responseData = await response.json();
-
-        const emails = responseData.value;
-
-        const response_emails = emails.map(item => {
-            return {
-                id: item['id'],
-                send: item['from']['emailAddress']['address'],
-                subject: item['subject'],
-                text: item['bodyPreview'],
-                html: item['body']['content'],
-                date: item['createdDateTime'],
-            }
-        })
-
-        return response_emails
-
-    } catch (error) {
-        throw error;
+const use_graph_api = async (refreshToken, clientId, mailbox, email, socks5, http) => {
+  try {
+    const data = await tokenRequest(
+      refreshToken,
+      clientId,
+      'https://graph.microsoft.com/.default',
+      socks5,
+      http
+    )
+    return {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token || refreshToken,
+      status: Boolean(data.access_token),
+      mailbox: mailboxName(mailbox),
+      email
     }
-
+  } catch (error) {
+    return {
+      status: false,
+      mailbox: mailboxName(mailbox),
+      email,
+      error
+    }
+  }
 }
 
-const use_imap_api = async (refresh_token, client_id, email, socks5, http) => {
-    const agentOptions = autoAgent(socks5, http);
-
-    const response = await agentOptions.fetch(tokenEndpoint, {
-        method: 'POST',
-        ...agentOptions.proxy,
-        signal: AbortSignal.timeout(30000),
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-            'client_id': client_id,
-            'grant_type': 'refresh_token',
-            'refresh_token': refresh_token,
-            'scope': 'https://outlook.office.com/IMAP.AccessAsUser.All'
-        }).toString()
-    });
-
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP error! status: ${response.status}, response: ${errorText}`);
+const graphRequest = async (url, accessToken, socks5, http) => {
+  const agentOptions = autoAgent(socks5, http)
+  const response = await agentOptions.fetch(url, {
+    method: 'GET',
+    ...agentOptions.proxy,
+    signal: AbortSignal.timeout(60000),
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Prefer: 'IdType="ImmutableId", odata.maxpagesize=100'
     }
-
-    const responseText = await response.text();
-
-    try {
-        const data = JSON.parse(responseText);
-        return {
-            access_token: data.access_token,
-        };
-    } catch (parseError) {
-        throw new Error(`Failed to parse JSON: ${parseError.message}, response: ${responseText}`);
-    }
+  })
+  if (!response.ok) {
+    const error = new Error(`Microsoft Graph request failed with status ${response.status}`)
+    error.status = response.status
+    throw error
+  }
+  return response.json()
 }
 
-const generateAuthString = (email, accessToken) => {
-    const authString = `user=${email}\x01auth=Bearer ${accessToken}\x01\x01`;
-    return Buffer.from(authString).toString('base64');
+const use_get_graph_emails = async (graphResult, cursor = '', socks5, http) => {
+  const messages = []
+  const removed = []
+  let deltaLink = ''
+  let nextUrl = cursor
+
+  if (!nextUrl) {
+    const params = new URLSearchParams()
+    params.set('$select', 'id,internetMessageId,from,subject,bodyPreview,receivedDateTime')
+    nextUrl = `${graphBaseUrl}/me/mailFolders/${graphResult.mailbox}/messages/delta?${params.toString()}`
+  }
+
+  while (nextUrl) {
+    const page = await graphRequest(nextUrl, graphResult.access_token, socks5, http)
+    for (const item of page.value || []) {
+      if (item['@removed']) {
+        if (item.id) removed.push(String(item.id))
+        continue
+      }
+      messages.push({
+        id: String(item.id || item.internetMessageId || ''),
+        send: item.from?.emailAddress?.address || '',
+        subject: item.subject || '',
+        text: item.bodyPreview || '',
+        html: '',
+        date: item.receivedDateTime || '',
+        provider: 'graph',
+        body_loaded: false
+      })
+    }
+    nextUrl = page['@odata.nextLink'] || ''
+    deltaLink = page['@odata.deltaLink'] || deltaLink
+  }
+
+  return { messages, removed, cursor: deltaLink || cursor }
 }
+
+const use_get_graph_message_body = async (graphResult, messageId, socks5, http) => {
+  const params = new URLSearchParams({ '$select': 'body,bodyPreview' })
+  const url = `${graphBaseUrl}/me/messages/${encodeURIComponent(messageId)}?${params.toString()}`
+  const item = await graphRequest(url, graphResult.access_token, socks5, http)
+  const contentType = String(item.body?.contentType || '').toLowerCase()
+  const content = item.body?.content || ''
+  return {
+    text: contentType === 'text' ? content : (item.bodyPreview || ''),
+    html: contentType === 'html' ? content : ''
+  }
+}
+
+const use_imap_api = async (refreshToken, clientId, email, socks5, http) => {
+  const data = await tokenRequest(
+    refreshToken,
+    clientId,
+    'https://outlook.office.com/IMAP.AccessAsUser.All',
+    socks5,
+    http
+  )
+  return {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token || refreshToken,
+    email
+  }
+}
+
+const generateAuthString = (email, accessToken) => Buffer.from(
+  `user=${email}\x01auth=Bearer ${accessToken}\x01\x01`
+).toString('base64')
 
 const toImapDate = (iso) => {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return ''
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`
 }
 
-const use_get_imap_emails = (email, authString, mailbox = "INBOX", top = 10000, socks5, http, since = '') => {
-    return new Promise((resolve, reject) => {
-        const sinceDate = toImapDate(since)
-        const imap = new Imap({
-            user: email,
-            xoauth2: authString,
-            host: 'outlook.office365.com',
-            port: 993,
-            tls: true,
-            connTimeout: 30000,
-            authTimeout: 30000,
-            tlsOptions: {
-                rejectUnauthorized: true
-            }
-        });
-        const emailList = [];
-        let messageCount = 0;
-        let processedCount = 0;
+const connectHttpProxy = (proxyUrl, destination) => new Promise((resolve, reject) => {
+  const parsed = new URL(proxyUrl.includes('://') ? proxyUrl : `http://${proxyUrl}`)
+  const socket = net.connect(Number(parsed.port || 8080), parsed.hostname)
+  const authorization = parsed.username
+    ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`).toString('base64')}\r\n`
+    : ''
+  let response = Buffer.alloc(0)
 
-        imap.once("ready", async () => {
-            try {
-                // 动态打开指定的邮箱（如 INBOX 或 Junk）
-                await new Promise((resolve, reject) => {
-                    imap.openBox(mailbox, true, (err, box) => {
-                        if (err) return reject(err);
-                        resolve(box);
-                    });
-                });
+  socket.setTimeout(15000)
+  socket.once('connect', () => {
+    socket.write(
+      `CONNECT ${destination.host}:${destination.port} HTTP/1.1\r\n` +
+      `Host: ${destination.host}:${destination.port}\r\n` +
+      authorization +
+      'Connection: keep-alive\r\n\r\n'
+    )
+  })
+  socket.on('data', (chunk) => {
+    response = Buffer.concat([response, chunk])
+    const boundary = response.indexOf('\r\n\r\n')
+    if (boundary === -1) return
+    socket.removeAllListeners('data')
+    const statusLine = response.subarray(0, boundary).toString('latin1').split('\r\n')[0]
+    if (!/\s200\s/.test(statusLine)) {
+      socket.destroy()
+      reject(new Error(`HTTP proxy CONNECT failed: ${statusLine}`))
+      return
+    }
+    const remaining = response.subarray(boundary + 4)
+    if (remaining.length) socket.unshift(remaining)
+    socket.setTimeout(0)
+    resolve(socket)
+  })
+  socket.once('timeout', () => {
+    socket.destroy()
+    reject(new Error('HTTP proxy connection timed out'))
+  })
+  socket.once('error', reject)
+})
 
-                const results = await new Promise((resolve, reject) => {
-                    const criteria = sinceDate ? [['SINCE', sinceDate]] : ['ALL'];
-                    imap.search(criteria, (err, results) => {
-                        if (err) return reject(err);
-
-                        let temp_top = top;
-
-                        if (temp_top > results.length) {
-                            temp_top = results.length;
-                        }
-
-                        // 抛出最近的 temp_top 条邮件
-                        resolve(results.slice(-temp_top));
-                    });
-                });
-
-                if (results.length === 0) {
-                    imap.end();
-                    return;
-                }
-
-                messageCount = results.length;
-                const f = imap.fetch(results, { bodies: "" });
-
-                f.on("message", (msg, seqno) => {
-                    msg.on("body", (stream, info) => {
-                        // 使用 Promise 包装 simpleParser 以确保所有邮件都被处理完成
-                        simpleParser(stream)
-                            .then(mail => {
-                                const data = {
-                                    send: mail.from.text,
-                                    subject: mail.subject,
-                                    text: mail.text,
-                                    html: mail.html,
-                                    date: mail.date,
-                                };
-                                emailList.push(data);
-                            })
-                            .catch(err => {
-                                console.error('Error parsing email:', err);
-                            })
-                            .finally(() => {
-                                processedCount++;
-                                // 当所有邮件都处理完成后关闭连接
-                                if (processedCount === messageCount) {
-                                    imap.end();
-                                }
-                            });
-                    });
-                });
-
-                f.once("error", (err) => {
-                    console.error('IMAP fetch error:', err);
-                    reject(err);
-                    imap.end();
-                });
-            } catch (err) {
-                console.error('IMAP ready error:', err);
-                reject(err);
-                imap.end();
-            }
-        });
-
-        imap.once('error', (err) => {
-            console.error('IMAP connection error:', err);
-            reject(err);
-        });
-
-        imap.once('end', () => {
-            resolve(emailList);
-            console.log('IMAP connection ended');
-        });
-
-        imap.connect();
+const createImapProxySocket = async (socks5, http) => {
+  const destination = { host: 'outlook.office365.com', port: 993 }
+  if (socks5) {
+    const parsed = new URL(socks5.includes('://') ? socks5 : `socks5://${socks5}`)
+    const result = await SocksClient.createConnection({
+      command: 'connect',
+      destination,
+      proxy: {
+        host: parsed.hostname,
+        port: Number(parsed.port || 1080),
+        type: 5,
+        userId: decodeURIComponent(parsed.username || ''),
+        password: decodeURIComponent(parsed.password || '')
+      },
+      timeout: 15000
     })
+    return result.socket
+  }
+  if (http) return connectHttpProxy(http, destination)
+  return null
+}
+
+const use_get_imap_emails = async (email, authString, mailbox = 'INBOX', top = 10000, socks5, http, since = '') => {
+  const proxySocket = await createImapProxySocket(socks5, http)
+  return new Promise((resolve, reject) => {
+    const config = {
+      user: email,
+      xoauth2: authString,
+      host: 'outlook.office365.com',
+      port: 993,
+      tls: true,
+      connTimeout: 30000,
+      authTimeout: 30000,
+      tlsOptions: { rejectUnauthorized: true, servername: 'outlook.office365.com' }
+    }
+    if (proxySocket) config.sock = proxySocket
+
+    const imap = new Imap(config)
+    const emailList = []
+    let settled = false
+    let uidValidity = ''
+
+    const finish = (error) => {
+      if (settled) return
+      settled = true
+      if (error) reject(error)
+      else resolve(emailList.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)))
+    }
+
+    imap.once('ready', () => {
+      imap.openBox(mailbox, true, (openError, box) => {
+        if (openError) {
+          finish(openError)
+          imap.end()
+          return
+        }
+        uidValidity = String(box.uidvalidity || '')
+        const sinceDate = toImapDate(since)
+        const criteria = sinceDate ? [['SINCE', sinceDate]] : ['ALL']
+        imap.search(criteria, (searchError, results) => {
+          if (searchError) {
+            finish(searchError)
+            imap.end()
+            return
+          }
+          const ids = results.slice(-Math.min(Number(top) || 10000, results.length))
+          if (!ids.length) {
+            imap.end()
+            return
+          }
+
+          const tasks = []
+          const fetcher = imap.fetch(ids, { bodies: '' })
+          fetcher.on('message', (message) => {
+            let attributes = null
+            let parsedMail = Promise.resolve(null)
+            message.once('attributes', (value) => { attributes = value })
+            message.on('body', (stream) => {
+              parsedMail = simpleParser(stream, { skipHtmlToText: true, skipTextToHtml: true })
+            })
+            tasks.push(new Promise((taskResolve) => {
+              message.once('end', async () => {
+                try {
+                  const mail = await parsedMail
+                  if (!mail) return
+                  const stableId = attributes?.uid
+                    ? `imap:${uidValidity}:${attributes.uid}`
+                    : `imap-message:${mail.messageId || `${mail.date?.toISOString() || ''}:${mail.subject || ''}`}`
+                  emailList.push({
+                    id: stableId,
+                    send: mail.from?.text || '',
+                    subject: mail.subject || '',
+                    text: mail.text || '',
+                    html: typeof mail.html === 'string' ? mail.html : '',
+                    date: mail.date || '',
+                    provider: 'imap',
+                    body_loaded: true
+                  })
+                } finally {
+                  taskResolve()
+                }
+              })
+            }))
+          })
+          fetcher.once('error', (error) => {
+            finish(error)
+            imap.end()
+          })
+          fetcher.once('end', async () => {
+            await Promise.all(tasks)
+            imap.end()
+          })
+        })
+      })
+    })
+    imap.once('error', finish)
+    imap.once('end', () => finish())
+    imap.connect()
+  })
 }
 
 const use_test_proxy = async (socks5, http) => {
-
-    const agentOptions = autoAgent(socks5, http);
-
-    const response = await agentOptions.fetch('https://unix.xin/api/get_ip', {
-        ...agentOptions.proxy,
-    })
-
-    const body = await response.json();
-
-    return {
-        ip: body.ip,
-    };
+  const agentOptions = autoAgent(socks5, http)
+  const response = await agentOptions.fetch('https://unix.xin/api/get_ip', {
+    ...agentOptions.proxy,
+    signal: AbortSignal.timeout(15000)
+  })
+  if (!response.ok) throw new Error(`Proxy test failed with status ${response.status}`)
+  const body = await response.json()
+  return { ip: body.ip }
 }
 
 module.exports = {
-    use_graph_api,
-    use_get_graph_emails,
-    use_imap_api,
-    generateAuthString,
-    use_get_imap_emails,
-    use_test_proxy,
+  use_graph_api,
+  use_get_graph_emails,
+  use_get_graph_message_body,
+  use_imap_api,
+  generateAuthString,
+  use_get_imap_emails,
+  use_test_proxy
 }

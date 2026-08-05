@@ -29,26 +29,50 @@ test('persists mailbox accounts and cached messages in SQLite', () => {
     date: '2026-08-05T00:00:00.000Z'
   }])
 
-  assert.deepEqual(store.listMessages(account.id, 'INBOX'), [{
-    id: 'message-1',
-    send: 'sender@example.com',
-    subject: 'Persistent message',
-    text: 'Hello',
-    date: '2026-08-05T00:00:00.000Z'
-  }])
+  assert.deepEqual(store.listMessages({ accountId: account.id, mailbox: 'INBOX' }), {
+    items: [{
+      id: 'message-1',
+      account_id: account.id,
+      account_email: 'persist@example.com',
+      send: 'sender@example.com',
+      subject: 'Persistent message',
+      text: 'Hello',
+      date: '2026-08-05T00:00:00.000Z',
+      provider: 'legacy',
+      body_loaded: 1
+    }],
+    total: 1,
+    limit: 100,
+    offset: 0,
+    has_more: false
+  })
 
   assert.deepEqual(store.getMessage(account.id, 'INBOX', 'message-1'), {
     id: 'message-1',
+    account_id: account.id,
+    mailbox: 'INBOX',
     send: 'sender@example.com',
     subject: 'Persistent message',
     text: 'Hello',
     html: '<p>Hello</p>',
-    date: '2026-08-05T00:00:00.000Z'
+    date: '2026-08-05T00:00:00.000Z',
+    provider: 'legacy',
+    body_loaded: 1
   })
 
-  assert.equal(store.getSyncState(account.id, 'INBOX'), '')
-  store.setSyncState(account.id, 'INBOX', '2026-08-05T00:00:00.000Z')
-  assert.equal(store.getSyncState(account.id, 'INBOX'), '2026-08-05T00:00:00.000Z')
+  assert.deepEqual(store.getSyncState(account.id, 'INBOX'), {
+    last_synced_at: '',
+    sync_cursor: '',
+    last_error: '',
+    provider: ''
+  })
+  store.setSyncState(account.id, 'INBOX', { last_synced_at: '2026-08-05T00:00:00.000Z' })
+  assert.deepEqual(store.getSyncState(account.id, 'INBOX'), {
+    last_synced_at: '2026-08-05T00:00:00.000Z',
+    sync_cursor: '',
+    last_error: '',
+    provider: ''
+  })
 })
 
 after(() => {

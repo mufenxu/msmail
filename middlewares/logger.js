@@ -11,7 +11,7 @@ module.exports = async (ctx, next) => {
   }
   
   const ms = Date.now() - start
-  const logMsg = `${ctx.method} ${ctx.url} - ${ms}ms - ${ctx.status}`
+  const logMsg = `${ctx.method} ${ctx.path} - ${ms}ms - ${ctx.status}`
   
   if (ctx.status >= 500) {
     logger.error(logMsg)

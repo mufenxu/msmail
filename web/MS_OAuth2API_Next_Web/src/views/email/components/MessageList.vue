@@ -3,7 +3,7 @@
     <div class="list-head">
       <div class="list-title">
         <h2>{{ folder === 'INBOX' ? '收件箱' : '垃圾邮件' }}</h2>
-        <span class="count">{{ messages.length }} 封</span>
+        <span class="count">{{ total }} 封</span>
       </div>
       <div class="list-toolbar">
         <button class="tool-btn primary" :disabled="receiveLoading || !canReceive" @click="$emit('receive')">
@@ -11,7 +11,7 @@
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
             <path d="M21 3v6h-6" />
           </svg>
-          {{ receiveLoading ? '收取中…' : '收取新邮件' }}
+          {{ receiveLoading ? '同步中…' : unified ? '同步全部账号' : '收取新邮件' }}
         </button>
         <button class="tool-btn" :disabled="!canReceive" @click="$emit('refresh')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -31,8 +31,8 @@
             <path d="m3 7 9 6 9-6" />
           </svg>
         </div>
-        <p>请先配置访问密码</p>
-        <span class="empty-hint">配置后可加载账号与邮件</span>
+        <p>请先登录</p>
+        <span class="empty-hint">登录后可加载账号与邮件</span>
       </div>
       <div v-else-if="!hasAccount" class="list-empty">
         <div class="empty-icon">
@@ -60,6 +60,7 @@
             </div>
             <div class="msg-subject">{{ message.subject || '（无主题）' }}</div>
             <div class="msg-snippet">{{ snippet(message.text) }}</div>
+            <div v-if="unified && message.account_email" class="msg-account">{{ message.account_email }}</div>
           </div>
         </div>
       </template>
@@ -71,8 +72,13 @@
           </svg>
         </div>
         <p>{{ searchKeyword ? '没有匹配的邮件' : '这里还没有邮件' }}</p>
-        <span class="empty-hint">{{ searchKeyword ? '换个关键词试试' : '点击「收取新邮件」从服务器拉取' }}</span>
+        <span class="empty-hint">{{ searchKeyword ? '换个关键词试试' : unified ? '点击「同步全部账号」从服务器拉取' : '点击「收取新邮件」从服务器拉取' }}</span>
       </div>
+      </div>
+    <div v-if="total > 0" class="list-pagination">
+      <button class="page-btn" title="上一页" :disabled="offset === 0 || listLoading" @click="$emit('page', previousOffset)">‹</button>
+      <span>{{ currentPage }} / {{ pageCount }}</span>
+      <button class="page-btn" title="下一页" :disabled="!hasMore || listLoading" @click="$emit('page', nextOffset)">›</button>
     </div>
   </section>
 </template>
@@ -91,21 +97,27 @@ const props = defineProps<{
   hasAccount: boolean
   listLoading: boolean
   receiveLoading: boolean
+  unified: boolean
+  total: number
+  limit: number
+  offset: number
+  hasMore: boolean
 }>()
 
 defineEmits<{
   (e: 'receive'): void
   (e: 'refresh'): void
   (e: 'select', message: Message): void
+  (e: 'page', offset: number): void
 }>()
 
 const canReceive = computed(() => props.passwordSet && props.hasAccount)
 
-const displayMessages = computed(() => {
-  const keyword = props.searchKeyword.trim().toLowerCase()
-  if (!keyword) return props.messages
-  return props.messages.filter((m) => [m.send, m.subject, m.text].some((v) => (v || '').toLowerCase().includes(keyword)))
-})
+const displayMessages = computed(() => props.messages)
+const currentPage = computed(() => Math.floor(props.offset / props.limit) + 1)
+const pageCount = computed(() => Math.max(Math.ceil(props.total / props.limit), 1))
+const previousOffset = computed(() => Math.max(props.offset - props.limit, 0))
+const nextOffset = computed(() => props.offset + props.limit)
 
 const isActive = (message: Message): boolean => messageKey(message) === props.selectedMessageId
 
@@ -124,6 +136,44 @@ const snippet = (text: string): string => {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.msg-account {
+  margin-top: 4px;
+  color: var(--mm-accent);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-pagination {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-top: 1px solid var(--mm-border);
+  color: var(--mm-text-3);
+  font-size: 12px;
+}
+
+.page-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--mm-border);
+  border-radius: 6px;
+  background: var(--mm-panel);
+  color: var(--mm-text-2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .list-head {

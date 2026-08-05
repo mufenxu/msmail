@@ -1,4 +1,6 @@
 const store = require('../utils/db')
+const mailService = require('../services/api')
+const { normalizeMailbox } = require('../services/SyncService')
 
 const getBody = (ctx) => ctx.request.body || {}
 
@@ -48,7 +50,26 @@ const controller = {
     const body = getBody(ctx)
     ctx.body = {
       code: '200',
-      data: store.listMessages(account.id, body.mailbox)
+      data: store.listMessages({
+        accountId: account.id,
+        mailbox: normalizeMailbox(body.mailbox),
+        search: body.search,
+        limit: body.limit,
+        offset: body.offset
+      })
+    }
+  },
+
+  async listUnifiedMessages(ctx) {
+    const body = getBody(ctx)
+    ctx.body = {
+      code: '200',
+      data: store.listMessages({
+        mailbox: normalizeMailbox(body.mailbox),
+        search: body.search,
+        limit: body.limit,
+        offset: body.offset
+      })
     }
   },
 
@@ -62,8 +83,17 @@ const controller = {
   async messageBody(ctx) {
     const account = requireAccount(ctx.params.id)
     const body = getBody(ctx)
-    const message = store.getMessage(account.id, body.mailbox, body.id)
+    const mailbox = normalizeMailbox(body.mailbox)
+    let message = store.getMessage(account.id, mailbox, body.id)
     if (!message) ctx.throw(404, '邮件不存在')
+    if (!message.body_loaded && message.provider === 'graph') {
+      const loaded = await mailService.loadGraphBody(account, mailbox, message.id)
+      if (loaded.refresh_token && loaded.refresh_token !== account.refresh_token) {
+        store.updateRefreshToken(account.id, loaded.refresh_token)
+      }
+      store.saveMessageBody(account.id, mailbox, message.id, loaded)
+      message = store.getMessage(account.id, mailbox, message.id)
+    }
     ctx.body = { code: '200', data: message }
   }
 }
