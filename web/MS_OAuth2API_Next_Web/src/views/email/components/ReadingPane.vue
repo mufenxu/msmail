@@ -20,8 +20,14 @@
         </div>
       </div>
       <div class="reader-body">
-        <div v-if="message.html" class="mail-content" v-html="message.html"></div>
-        <div v-else class="mail-content plain-text">{{ message.text || '（无正文内容）' }}</div>
+        <div v-if="bodyLoading" class="body-loading">
+          <span class="spinner"></span>
+          正在加载正文…
+        </div>
+        <template v-else>
+          <div v-if="sanitizedHtml" class="mail-content" v-html="sanitizedHtml"></div>
+          <div v-else class="mail-content plain-text">{{ bodyText || '（无正文内容）' }}</div>
+        </template>
         <div class="readonly-note">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="11" width="18" height="11" rx="2" />
@@ -45,17 +51,30 @@
 </template>
 
 <script lang="ts" setup>
+import { computed } from 'vue'
+import DOMPurify from 'dompurify'
 import type { Message } from '@/types'
 import { avatarStyle, senderName, senderInitial, formatFullDate } from '@/utils/format'
 
-defineProps<{
+const props = defineProps<{
   message: Message | null
+  bodyHtml: string
+  bodyText: string
+  bodyLoading: boolean
   accountEmail: string
 }>()
 
 defineEmits<{
   (e: 'close'): void
 }>()
+
+const sanitizedHtml = computed(() => {
+  const html = props.bodyHtml || (props.message?.html ?? '')
+  if (!html) return ''
+  return DOMPurify.sanitize(html, {
+    FORBID_TAGS: ['script', 'style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'object', 'embed', 'iframe', 'link', 'meta', 'base']
+  })
+})
 </script>
 
 <style scoped>
@@ -170,6 +189,31 @@ defineEmits<{
   color: #33383f;
   font-size: 13.5px;
   line-height: 1.7;
+}
+
+.body-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--mm-text-3);
+  padding: 20px 0;
+}
+
+.spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid var(--mm-border-strong);
+  border-top-color: var(--mm-accent);
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .mail-content.plain-text {

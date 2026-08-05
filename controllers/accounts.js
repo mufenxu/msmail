@@ -57,6 +57,14 @@ const controller = {
     const body = getBody(ctx)
     store.replaceMessages(account.id, body.mailbox, body.messages)
     ctx.body = { code: '200', data: true }
+  },
+
+  async messageBody(ctx) {
+    const account = requireAccount(ctx.params.id)
+    const body = getBody(ctx)
+    const message = store.getMessage(account.id, body.mailbox, body.id)
+    if (!message) ctx.throw(404, '邮件不存在')
+    ctx.body = { code: '200', data: message }
   }
 }
 

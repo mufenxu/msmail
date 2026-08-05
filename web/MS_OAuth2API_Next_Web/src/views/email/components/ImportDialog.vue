@@ -161,16 +161,28 @@ const parseLines = (lines: string[]): Array<{ email: string; client_id: string; 
     .filter((item) => item.email && item.client_id && item.refresh_token)
 
 const requestApi = async (url: string, method = 'POST', body: Record<string, unknown> = {}) => {
-  const response = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, password: apiPassword.value })
-  })
-  const data = await response.json()
-  if (!response.ok || data.code != 200) {
-    throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60000)
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, password: apiPassword.value }),
+      signal: controller.signal
+    })
+    const data = await response.json()
+    if (!response.ok || data.code != 200) {
+      throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`)
+    }
+    return data.data
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('请求超时，请稍后重试')
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-  return data.data
 }
 
 const handleImport = async () => {

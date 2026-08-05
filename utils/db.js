@@ -37,6 +37,13 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_mail_messages_account_mailbox
     ON mail_messages(account_id, mailbox, date DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS mail_sync_state (
+    account_id INTEGER NOT NULL REFERENCES mail_accounts(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL CHECK (mailbox IN ('INBOX', 'Junk')),
+    last_synced_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (account_id, mailbox)
+  );
 `)
 
 const encryptionSecret = process.env.DATA_ENCRYPTION_KEY || process.env.PASSWORD || 'monkey-mail-local-development-key'
@@ -181,11 +188,34 @@ const saveMessages = (accountId, mailbox, messages, replace = false) => {
 const replaceMessages = (accountId, mailbox, messages) => saveMessages(accountId, mailbox, messages, true)
 
 const listMessages = (accountId, mailbox) => db.prepare(`
-  SELECT message_key AS id, send, subject, text, html, date
+  SELECT message_key AS id, send, subject, substr(text, 1, 300) AS text, date
   FROM mail_messages
   WHERE account_id = ? AND mailbox = ?
   ORDER BY date DESC, id DESC
 `).all(Number(accountId), normalizeMailbox(mailbox))
+
+const getMessage = (accountId, mailbox, messageKeyValue) => db.prepare(`
+  SELECT message_key AS id, send, subject, text, html, date
+  FROM mail_messages
+  WHERE account_id = ? AND mailbox = ? AND message_key = ?
+`).get(Number(accountId), normalizeMailbox(mailbox), String(messageKeyValue || '')) || null
+
+const getSyncState = (accountId, mailbox) => {
+  const row = db.prepare(`
+    SELECT last_synced_at
+    FROM mail_sync_state
+    WHERE account_id = ? AND mailbox = ?
+  `).get(Number(accountId), normalizeMailbox(mailbox))
+  return row?.last_synced_at || ''
+}
+
+const setSyncState = (accountId, mailbox, lastSyncedAt) => {
+  db.prepare(`
+    INSERT INTO mail_sync_state (account_id, mailbox, last_synced_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(account_id, mailbox) DO UPDATE SET last_synced_at = excluded.last_synced_at
+  `).run(Number(accountId), normalizeMailbox(mailbox), String(lastSyncedAt || ''))
+}
 
 const close = () => {
   if (db.open) db.close()
@@ -200,5 +230,8 @@ module.exports = {
   replaceMessages,
   saveMessages,
   listMessages,
+  getMessage,
+  getSyncState,
+  setSyncState,
   close
 }

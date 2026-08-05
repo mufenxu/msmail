@@ -34,9 +34,21 @@ test('persists mailbox accounts and cached messages in SQLite', () => {
     send: 'sender@example.com',
     subject: 'Persistent message',
     text: 'Hello',
-    html: '<p>Hello</p>',
     date: '2026-08-05T00:00:00.000Z'
   }])
+
+  assert.deepEqual(store.getMessage(account.id, 'INBOX', 'message-1'), {
+    id: 'message-1',
+    send: 'sender@example.com',
+    subject: 'Persistent message',
+    text: 'Hello',
+    html: '<p>Hello</p>',
+    date: '2026-08-05T00:00:00.000Z'
+  })
+
+  assert.equal(store.getSyncState(account.id, 'INBOX'), '')
+  store.setSyncState(account.id, 'INBOX', '2026-08-05T00:00:00.000Z')
+  assert.equal(store.getSyncState(account.id, 'INBOX'), '2026-08-05T00:00:00.000Z')
 })
 
 after(() => {

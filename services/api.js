@@ -13,19 +13,19 @@ const createMailError = (err) => {
 }
 
 const service = {
-  async mail_all(refresh_token, client_id, email, mailbox, socks5, http) {
+  async mail_all(refresh_token, client_id, email, mailbox, socks5, http, since = '') {
     try {
 
       const graph_api_result = await use_graph_api(refresh_token, client_id, mailbox, email, socks5, http)
 
       if (graph_api_result.status) {
-        const graph_emails = await use_get_graph_emails(graph_api_result, undefined, email, socks5, http)
+        const graph_emails = await use_get_graph_emails(graph_api_result, since ? 500 : undefined, email, socks5, http, since)
         return graph_emails
       }
 
       const imap_api_result = await use_imap_api(refresh_token, client_id, email, socks5, http)
       const authString = generateAuthString(email, imap_api_result.access_token)
-      const imap_emails = await use_get_imap_emails(email, authString, mailbox, undefined, socks5, http)
+      const imap_emails = await use_get_imap_emails(email, authString, mailbox, since ? 500 : undefined, socks5, http, since)
 
       return imap_emails
     } catch (err) {

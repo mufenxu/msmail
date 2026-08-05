@@ -29,9 +29,18 @@ const controller = {
     try {
       const request = getMailRequest(ctx)
       const account = resolveAccount(request)
-      const data = await service.mail_all(account.refresh_token, account.client_id, account.email, request.mailbox, request.socks5, request.http)
-      if (account.id) store.replaceMessages(account.id, request.mailbox, data)
-      ctx.body = { code: "200", data }
+      const since = account.id ? store.getSyncState(account.id, request.mailbox) : ''
+      const syncStartedAt = new Date().toISOString()
+      const data = await service.mail_all(account.refresh_token, account.client_id, account.email, request.mailbox, request.socks5, request.http, since)
+      if (account.id) {
+        if (Array.isArray(data) && data.length > 0) {
+          store.saveMessages(account.id, request.mailbox, data)
+        }
+        store.setSyncState(account.id, request.mailbox, syncStartedAt)
+        ctx.body = { code: "200", data: store.listMessages(account.id, request.mailbox) }
+      } else {
+        ctx.body = { code: "200", data }
+      }
     } catch (err) {
       logger.error('Failed to mail_all', err)
       ctx.throw(500, err.message || 'Failed to mail_all')

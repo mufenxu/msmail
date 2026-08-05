@@ -56,9 +56,16 @@
         :receive-loading="receiveLoading"
         @receive="handleReceive"
         @refresh="handleRefreshList"
-        @select="handleSelectMessage"
+        @select="selectMessage"
       />
-      <ReadingPane :message="selectedMessage" :account-email="selectedAccount?.email ?? ''" @close="selectedMessageId = null" />
+      <ReadingPane
+        :message="selectedMessage"
+        :body-html="bodyHtml"
+        :body-text="bodyText"
+        :body-loading="bodyLoading"
+        :account-email="selectedAccount?.email ?? ''"
+        @close="selectedMessageId = null"
+      />
     </div>
 
     <ImportDialog v-model="importDialogVisible" :api-password="apiPassword" @imported="handleImported" @set-password="handleSetPassword" />
@@ -120,17 +127,29 @@ import AccountManager from './components/AccountManager.vue'
 const apiPassword = ref(localStorage.getItem('monkey-mail-api-password') || '')
 const passwordSet = computed(() => apiPassword.value.length > 0)
 
-const requestApi = async (url: string, method = 'POST', body: Record<string, unknown> = {}) => {
-  const response = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, password: apiPassword.value })
-  })
-  const data = await response.json()
-  if (!response.ok || data.code != 200) {
-    throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`)
+const requestApi = async (url: string, method = 'POST', body: Record<string, unknown> = {}, timeoutMs = 60000) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, password: apiPassword.value }),
+      signal: controller.signal
+    })
+    const data = await response.json()
+    if (!response.ok || data.code != 200) {
+      throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`)
+    }
+    return data.data
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('请求超时，请稍后重试')
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-  return data.data
 }
 
 // ---------- 旧版本地数据迁移 ----------
@@ -223,6 +242,10 @@ const lastSync = ref('')
 const listLoading = ref(false)
 const receiveLoading = ref(false)
 const searchKeyword = ref('')
+const bodyHtml = ref('')
+const bodyText = ref('')
+const bodyLoading = ref(false)
+const bodyCache = ref<Record<string, { html: string; text: string }>>({})
 
 const accountKey = (account: Account) => String(account.id ?? account.email)
 
@@ -237,6 +260,7 @@ const updateCount = (account: Account, mailbox: Mailbox, count: number) => {
 const handleSelectAccount = async (account: Account) => {
   selectedAccountId.value = account.id ?? null
   selectedMessageId.value = null
+  clearBody()
   messages.value = []
   await loadMessages(true)
 }
@@ -245,6 +269,7 @@ const handleSwitchFolder = async (mailbox: Mailbox) => {
   if (mailbox === folder.value) return
   folder.value = mailbox
   selectedMessageId.value = null
+  clearBody()
   messages.value = []
   await loadMessages(true)
 }
@@ -272,11 +297,16 @@ const loadMessages = async (fromCache = true) => {
   }
 }
 
-const autoSelectFirst = () => {
+const autoSelectFirst = async () => {
   const keepCurrent = messages.value.some((m) => messageKey(m) === selectedMessageId.value)
-  if (keepCurrent) return
+  if (keepCurrent) {
+    const current = messages.value.find((m) => messageKey(m) === selectedMessageId.value)
+    if (current) await loadBody(current)
+    return
+  }
   const first = messages.value[0]
-  selectedMessageId.value = first ? messageKey(first) : null
+  if (first) await selectMessage(first)
+  else selectedMessageId.value = null
 }
 
 const handleReceive = async () => {
@@ -296,10 +326,10 @@ const handleReceive = async () => {
       payload.client_id = account.client_id
       payload.refresh_token = account.refresh_token
     }
-    const list = (await requestApi('/api/mail_all', 'POST', payload)) as Message[]
+    const list = (await requestApi('/api/mail_all', 'POST', payload, 120000)) as Message[]
     messages.value = list
     updateCount(account, folder.value, list.length)
-    autoSelectFirst()
+    await autoSelectFirst()
     lastSync.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     ElMessage.success('收取成功')
   } catch (error) {
@@ -313,8 +343,55 @@ const handleRefreshList = () => {
   loadMessages(true)
 }
 
-const handleSelectMessage = (message: Message) => {
+const selectMessage = async (message: Message) => {
   selectedMessageId.value = messageKey(message)
+  await loadBody(message)
+}
+
+const clearBody = () => {
+  bodyHtml.value = ''
+  bodyText.value = ''
+  bodyLoading.value = false
+}
+
+const loadBody = async (message: Message) => {
+  const account = selectedAccount.value
+  const cacheKey = `${account?.id ?? account?.email ?? 'legacy'}:${messageKey(message)}`
+  const cached = bodyCache.value[cacheKey]
+  if (cached) {
+    bodyHtml.value = cached.html
+    bodyText.value = cached.text
+    bodyLoading.value = false
+    return
+  }
+  if (message.html) {
+    bodyHtml.value = message.html
+    bodyText.value = message.text
+    bodyLoading.value = false
+    return
+  }
+
+  bodyLoading.value = true
+  bodyHtml.value = ''
+  bodyText.value = ''
+  try {
+    if (account?.id != null) {
+      const body = (await requestApi(`/api/accounts/${account.id}/messages/body`, 'POST', {
+        mailbox: folder.value,
+        id: message.id
+      })) as { html: string; text: string }
+      bodyCache.value = { ...bodyCache.value, [cacheKey]: { html: body.html || '', text: body.text || '' } }
+      bodyHtml.value = body.html || ''
+      bodyText.value = body.text || ''
+    } else {
+      bodyText.value = message.text
+    }
+  } catch (error) {
+    console.warn('加载邮件正文失败:', error)
+    bodyText.value = message.text || '（正文加载失败）'
+  } finally {
+    bodyLoading.value = false
+  }
 }
 
 // ---------- 账号编辑与删除 ----------

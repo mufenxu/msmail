@@ -26,6 +26,7 @@ const use_graph_api = async (refresh_token, client_id, mailbox, email, socks5, h
         response = await agentOptions.fetch(tokenEndpoint, {
             method: 'POST',
             ...agentOptions.proxy,
+            signal: AbortSignal.timeout(30000),
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
@@ -71,15 +72,25 @@ const use_graph_api = async (refresh_token, client_id, mailbox, email, socks5, h
     }
 }
 
-const use_get_graph_emails = async (graph_api_result, top = 10000, email, socks5, http) => {
+const use_get_graph_emails = async (graph_api_result, top = 10000, email, socks5, http, since = '') => {
 
     try {
 
         const agentOptions = autoAgent(socks5, http);
 
-        const response = await agentOptions.fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${graph_api_result.mailbox}/messages?$top=${top}`, {
+        const params = new URLSearchParams();
+        params.set('$top', String(top));
+        params.set('$select', 'id,from,subject,bodyPreview,body,createdDateTime');
+        if (since) {
+            params.set('$filter', `createdDateTime ge ${since}`);
+        }
+
+        const url = `https://graph.microsoft.com/v1.0/me/mailFolders/${graph_api_result.mailbox}/messages?${params.toString()}`;
+
+        const response = await agentOptions.fetch(url, {
             method: 'GET',
             ...agentOptions.proxy,
+            signal: AbortSignal.timeout(60000),
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 "Authorization": `Bearer ${graph_api_result.access_token}`
@@ -120,6 +131,7 @@ const use_imap_api = async (refresh_token, client_id, email, socks5, http) => {
     const response = await agentOptions.fetch(tokenEndpoint, {
         method: 'POST',
         ...agentOptions.proxy,
+        signal: AbortSignal.timeout(30000),
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded'
         },
@@ -153,16 +165,26 @@ const generateAuthString = (email, accessToken) => {
     return Buffer.from(authString).toString('base64');
 }
 
-const use_get_imap_emails = (email, authString, mailbox = "INBOX", top = 10000, socks5, http) => {
+const toImapDate = (iso) => {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`
+}
+
+const use_get_imap_emails = (email, authString, mailbox = "INBOX", top = 10000, socks5, http, since = '') => {
     return new Promise((resolve, reject) => {
+        const sinceDate = toImapDate(since)
         const imap = new Imap({
             user: email,
             xoauth2: authString,
             host: 'outlook.office365.com',
             port: 993,
             tls: true,
+            connTimeout: 30000,
+            authTimeout: 30000,
             tlsOptions: {
-                rejectUnauthorized: false
+                rejectUnauthorized: true
             }
         });
         const emailList = [];
@@ -180,7 +202,8 @@ const use_get_imap_emails = (email, authString, mailbox = "INBOX", top = 10000, 
                 });
 
                 const results = await new Promise((resolve, reject) => {
-                    imap.search(["ALL"], (err, results) => {
+                    const criteria = sinceDate ? [['SINCE', sinceDate]] : ['ALL'];
+                    imap.search(criteria, (err, results) => {
                         if (err) return reject(err);
 
                         let temp_top = top;
