@@ -63,10 +63,6 @@
         </div>
         <div class="account-details">
           <div class="account-detail">
-            <span>Client ID</span>
-            <span class="account-detail-value account-client-id" :title="account.client_id">{{ account.client_id || '未设置' }}</span>
-          </div>
-          <div class="account-detail">
             <span>邮件数量</span>
             <span class="account-detail-value">收件 {{ accountMailboxCount(account, 'INBOX') }} · 垃圾 {{ accountMailboxCount(account, 'Junk') }}</span>
           </div>
@@ -372,11 +368,6 @@ const syncText = computed(() => {
   text-align: right;
   overflow-wrap: anywhere;
   word-break: break-word;
-}
-
-.account-client-id {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 10px;
 }
 
 .account-status {
