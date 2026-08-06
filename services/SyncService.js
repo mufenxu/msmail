@@ -1,6 +1,7 @@
 const logger = require('../utils/logger')
 const store = require('../utils/db')
 const mailService = require('./api')
+const tokenService = require('./TokenService')
 
 const normalizeMailbox = (mailbox) => {
   if (mailbox !== 'INBOX' && mailbox !== 'Junk') {
@@ -92,8 +93,37 @@ const syncAll = async ({ mailboxes = ['INBOX', 'Junk'], concurrency = 3 } = {}) 
 
 let scheduler = null
 let schedulerRunning = false
+let tokenScheduler = null
+let tokenSchedulerRunning = false
+
+const runTokenRefresh = async () => {
+  if (tokenSchedulerRunning) return
+  tokenSchedulerRunning = true
+  try {
+    const results = await tokenService.refreshAllTokens()
+    const failed = results.filter((result) => !result.ok).length
+    logger.info(`Scheduled token refresh completed: ${results.length - failed} succeeded, ${failed} failed`)
+  } catch (error) {
+    logger.error('Scheduled token refresh failed', error)
+  } finally {
+    tokenSchedulerRunning = false
+  }
+}
+
+const startTokenScheduler = () => {
+  const configuredMinutes = process.env.TOKEN_REFRESH_INTERVAL_MINUTES
+  const minutes = configuredMinutes == null || configuredMinutes === ''
+    ? 720
+    : Number(configuredMinutes)
+  if (!Number.isFinite(minutes) || minutes <= 0 || tokenScheduler) return
+  tokenScheduler = setInterval(runTokenRefresh, minutes * 60 * 1000)
+  tokenScheduler.unref()
+  logger.info(`Scheduled token refresh enabled: every ${minutes} minute(s)`)
+  void runTokenRefresh()
+}
 
 const startScheduler = () => {
+  startTokenScheduler()
   const minutes = Number(process.env.SYNC_INTERVAL_MINUTES || 0)
   if (!Number.isFinite(minutes) || minutes <= 0 || scheduler) return
   scheduler = setInterval(async () => {

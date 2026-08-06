@@ -24,7 +24,7 @@ npm run start
 
 后端默认监听 `PORT` 环境变量指定的端口，未配置时使用 `3000`。业务 API 必须配置 `PASSWORD`，浏览器登录后会使用 `HttpOnly`、`SameSite=Strict` 的签名 Cookie 访问接口；`/api/health` 不需要登录，可用于平台健康检查。
 
-默认数据库文件为 `data/monkey-mail.sqlite`，可通过 `DATA_DIR` 或 `SQLITE_PATH` 调整位置。refresh token 在 SQLite 中使用 `DATA_ENCRYPTION_KEY` 加密保存；生产环境应配置稳定的密钥并持久化数据库目录。可选的 `SESSION_SECRET` 用于加强会话签名；`SYNC_INTERVAL_MINUTES` 大于 0 时会定时同步全部账号，未配置时不自动同步。
+默认数据库文件为 `data/monkey-mail.sqlite`，可通过 `DATA_DIR` 或 `SQLITE_PATH` 调整位置。refresh token 在 SQLite 中使用 `DATA_ENCRYPTION_KEY` 加密保存；生产环境应配置稳定的密钥并持久化数据库目录。可选的 `SESSION_SECRET` 用于加强会话签名；`TOKEN_REFRESH_INTERVAL_MINUTES` 控制定期轮换 refresh token，默认每 720 分钟执行一次，设为 0 可禁用；`SYNC_INTERVAL_MINUTES` 大于 0 时会定时同步全部账号，未配置时不自动同步。
 
 ### 前端
 
@@ -114,7 +114,7 @@ POST /api/test-proxy
 - 启动命令：`npm run start`
 - 服务端口：使用平台分配的 `PORT`
 - 健康检查：`/api/health`
-- 环境变量：`PASSWORD`、`API_NAME`、`PORT`、`MS_TENANT`、`DATA_DIR`、`DATA_ENCRYPTION_KEY`、`SESSION_SECRET`、`SYNC_INTERVAL_MINUTES`
+- 环境变量：`PASSWORD`、`API_NAME`、`PORT`、`MS_TENANT`、`DATA_DIR`、`DATA_ENCRYPTION_KEY`、`SESSION_SECRET`、`TOKEN_REFRESH_INTERVAL_MINUTES`、`SYNC_INTERVAL_MINUTES`
 - `MS_TENANT` 默认使用 `common`；如果 refresh token 来自固定组织租户，可改为对应租户 ID
 
 请将 `PASSWORD`、`DATA_ENCRYPTION_KEY`、`SESSION_SECRET` 和其他运行时配置放在平台环境变量中，不要提交真实 `.env`。需要为 `DATA_DIR` 指向的平台持久化目录配置持久卷，否则应用节点重建时 SQLite 数据会丢失。升级已有数据库时，新配置的 `DATA_ENCRYPTION_KEY` 会优先用于新令牌，旧令牌仍可使用原 `PASSWORD` 解密并在后续刷新时迁移。

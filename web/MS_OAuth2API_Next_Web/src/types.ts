@@ -4,6 +4,9 @@ export interface Account {
   client_id: string
   refresh_token?: string
   has_mail_password?: boolean
+  token_status?: 'unknown' | 'active' | 'reauth_required' | 'error'
+  token_last_refreshed_at?: string
+  token_last_error?: string
   created_at?: string
   updated_at?: string
   sync?: Partial<Record<Mailbox, AccountSyncState>>

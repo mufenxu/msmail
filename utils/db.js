@@ -18,7 +18,10 @@ db.exec(`
     refresh_token TEXT NOT NULL,
     mail_password TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    token_status TEXT NOT NULL DEFAULT 'unknown',
+    token_last_refreshed_at TEXT,
+    token_last_error TEXT NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS mail_messages (
@@ -62,6 +65,9 @@ const ensureColumn = (table, column, definition) => {
 ensureColumn('mail_messages', 'provider', "TEXT NOT NULL DEFAULT 'legacy'")
 ensureColumn('mail_messages', 'body_loaded', 'INTEGER NOT NULL DEFAULT 1')
 ensureColumn('mail_accounts', 'mail_password', 'TEXT')
+ensureColumn('mail_accounts', 'token_status', "TEXT NOT NULL DEFAULT 'unknown'")
+ensureColumn('mail_accounts', 'token_last_refreshed_at', 'TEXT')
+ensureColumn('mail_accounts', 'token_last_error', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('mail_sync_state', 'sync_cursor', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('mail_sync_state', 'last_error', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('mail_sync_state', 'provider', "TEXT NOT NULL DEFAULT ''")
@@ -107,6 +113,9 @@ const publicAccount = (row) => ({
   email: row.email,
   client_id: row.client_id,
   has_mail_password: Boolean(row.mail_password),
+  token_status: row.token_status || 'unknown',
+  token_last_refreshed_at: row.token_last_refreshed_at || '',
+  token_last_error: row.token_last_error || '',
   created_at: row.created_at,
   updated_at: row.updated_at
 })
@@ -115,7 +124,8 @@ const normalizeMailbox = (mailbox) => mailbox === 'Junk' ? 'Junk' : 'INBOX'
 
 const listAccounts = () => {
   const accounts = db.prepare(`
-  SELECT id, email, client_id, mail_password, created_at, updated_at
+  SELECT id, email, client_id, mail_password, token_status, token_last_refreshed_at, token_last_error,
+         created_at, updated_at
   FROM mail_accounts
   ORDER BY id ASC
   `).all().map(publicAccount)
@@ -149,14 +159,16 @@ const listAccounts = () => {
 }
 
 const listAccountCredentials = () => db.prepare(`
-  SELECT id, email, client_id, refresh_token, mail_password, created_at, updated_at
+  SELECT id, email, client_id, refresh_token, mail_password, token_status, token_last_refreshed_at,
+         token_last_error, created_at, updated_at
   FROM mail_accounts
   ORDER BY id ASC
 `).all().map((row) => ({ ...publicAccount(row), refresh_token: decrypt(row.refresh_token) }))
 
 const getAccountCredentials = (id) => {
   const row = db.prepare(`
-    SELECT id, email, client_id, refresh_token, mail_password, created_at, updated_at
+    SELECT id, email, client_id, refresh_token, mail_password, token_status, token_last_refreshed_at,
+           token_last_error, created_at, updated_at
     FROM mail_accounts
     WHERE id = ?
   `).get(Number(id))
@@ -199,6 +211,7 @@ const upsertAccount = ({ id, email, client_id, refresh_token, mail_password }) =
       Number(id)
     )
     if (result.changes === 0) return null
+    if (normalizedRefreshToken) resetRefreshTokenState(id)
     return publicAccount(db.prepare('SELECT * FROM mail_accounts WHERE id = ?').get(Number(id)))
   }
 
@@ -217,10 +230,18 @@ const upsertAccount = ({ id, email, client_id, refresh_token, mail_password }) =
     normalizedMailPassword ? encrypt(normalizedMailPassword) : null
   )
 
+  const row = db.prepare('SELECT * FROM mail_accounts WHERE email = ?').get(normalizedEmail)
+  if (normalizedRefreshToken) resetRefreshTokenState(row.id)
   return publicAccount(db.prepare('SELECT * FROM mail_accounts WHERE email = ?').get(normalizedEmail))
 }
 
 const deleteAccount = (id) => db.prepare('DELETE FROM mail_accounts WHERE id = ?').run(Number(id)).changes > 0
+
+const resetRefreshTokenState = (id) => db.prepare(`
+  UPDATE mail_accounts
+  SET token_status = 'unknown', token_last_refreshed_at = NULL, token_last_error = ''
+  WHERE id = ?
+`).run(Number(id)).changes > 0
 
 const updateRefreshToken = (id, refreshToken) => {
   if (!refreshToken) return false
@@ -229,6 +250,22 @@ const updateRefreshToken = (id, refreshToken) => {
     SET refresh_token = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(encrypt(String(refreshToken)), Number(id)).changes > 0
+}
+
+const setRefreshTokenState = (id, status, error = '') => {
+  const normalizedStatus = String(status || 'error')
+  return db.prepare(`
+    UPDATE mail_accounts
+    SET token_status = ?,
+        token_last_refreshed_at = CASE WHEN ? = 'active' THEN datetime('now') ELSE token_last_refreshed_at END,
+        token_last_error = ?
+    WHERE id = ?
+  `).run(
+    normalizedStatus,
+    normalizedStatus,
+    normalizedStatus === 'active' ? '' : String(error || ''),
+    Number(id)
+  ).changes > 0
 }
 
 const messageKey = (message, index) => {
@@ -401,6 +438,7 @@ module.exports = {
   upsertAccount,
   deleteAccount,
   updateRefreshToken,
+  setRefreshTokenState,
   replaceMessages,
   saveMessages,
   deleteMessages,

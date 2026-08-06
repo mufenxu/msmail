@@ -124,12 +124,16 @@ const metaParts = (account: Account): string[] => {
     if (accountCountsValue.Junk != null) parts.push(`垃圾 ${accountCountsValue.Junk}`)
   }
   const state = account.sync?.[props.folder]
-  if (state?.last_error) parts.push('同步异常')
+  if (account.token_status === 'reauth_required') parts.push('需要重新授权')
+  else if (account.token_status === 'error') parts.push('令牌刷新异常')
+  else if (state?.last_error) parts.push('同步异常')
   else if (state?.provider) parts.push(state.provider.toUpperCase())
   return parts
 }
 
 const syncTitle = (account: Account): string => {
+  if (account.token_status === 'reauth_required') return account.token_last_error || '需要重新授权'
+  if (account.token_status === 'error') return account.token_last_error || '令牌刷新失败'
   const state = account.sync?.[props.folder]
   if (state?.last_error) return state.last_error
   if (state?.last_synced_at) return `上次成功：${new Date(state.last_synced_at).toLocaleString('zh-CN')}`

@@ -7,42 +7,79 @@ const { autoAgent } = require('./ProxyService')
 const oauthTenant = process.env.MS_TENANT || 'common'
 const tokenEndpoint = `https://login.microsoftonline.com/${oauthTenant}/oauth2/v2.0/token`
 const graphBaseUrl = 'https://graph.microsoft.com/v1.0'
+const GRAPH_SCOPE = 'https://graph.microsoft.com/.default'
+const IMAP_SCOPE = 'https://outlook.office.com/IMAP.AccessAsUser.All'
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504])
+const MAX_RETRIES = 2
 
 const mailboxName = (mailbox) => mailbox === 'Junk' ? 'junkemail' : 'inbox'
 
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+const retryAfterMilliseconds = (response) => {
+  const value = response.headers?.get('retry-after')
+  if (!value) return 0
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const timestamp = Date.parse(value)
+  return Number.isNaN(timestamp) ? 0 : Math.max(0, timestamp - Date.now())
+}
+
+const backoffMilliseconds = (attempt) => Math.min(
+  1000 * (2 ** attempt) + Math.floor(Math.random() * 250),
+  30000
+)
+
+const fetchWithRetry = async (request) => {
+  let lastError
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await request()
+      if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_RETRIES) return response
+      await response.arrayBuffer().catch(() => {})
+      await delay(retryAfterMilliseconds(response) || backoffMilliseconds(attempt))
+    } catch (error) {
+      lastError = error
+      if (attempt === MAX_RETRIES) throw error
+      await delay(backoffMilliseconds(attempt))
+    }
+  }
+  throw lastError
+}
+
+const isTransientServiceError = (error) => RETRYABLE_STATUSES.has(
+  Number(error?.status || error?.cause?.status || 0)
+)
+
 const tokenRequest = async (refreshToken, clientId, scope, socks5, http) => {
   const agentOptions = autoAgent(socks5, http)
-  const response = await agentOptions.fetch(tokenEndpoint, {
+  const body = new URLSearchParams({
+    client_id: clientId,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    scope
+  }).toString()
+  const response = await fetchWithRetry(() => agentOptions.fetch(tokenEndpoint, {
     method: 'POST',
     ...agentOptions.proxy,
     signal: AbortSignal.timeout(30000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      scope
-    }).toString()
-  })
+    body
+  }))
 
   if (!response.ok) {
     const error = new Error(`Microsoft token request failed with status ${response.status}`)
     error.status = response.status
+    error.retry_after_ms = retryAfterMilliseconds(response)
     throw error
   }
 
   return response.json()
 }
 
-const use_graph_api = async (refreshToken, clientId, mailbox, email, socks5, http) => {
+const use_graph_api = async (refreshToken, clientId, mailbox, email, socks5, http, tokenData = null) => {
   try {
-    const data = await tokenRequest(
-      refreshToken,
-      clientId,
-      'https://graph.microsoft.com/.default',
-      socks5,
-      http
-    )
+    const data = tokenData || await tokenRequest(refreshToken, clientId, GRAPH_SCOPE, socks5, http)
     return {
       access_token: data.access_token,
       refresh_token: data.refresh_token || refreshToken,
@@ -62,7 +99,7 @@ const use_graph_api = async (refreshToken, clientId, mailbox, email, socks5, htt
 
 const graphRequest = async (url, accessToken, socks5, http) => {
   const agentOptions = autoAgent(socks5, http)
-  const response = await agentOptions.fetch(url, {
+  const response = await fetchWithRetry(() => agentOptions.fetch(url, {
     method: 'GET',
     ...agentOptions.proxy,
     signal: AbortSignal.timeout(60000),
@@ -70,10 +107,11 @@ const graphRequest = async (url, accessToken, socks5, http) => {
       Authorization: `Bearer ${accessToken}`,
       Prefer: 'IdType="ImmutableId", odata.maxpagesize=100'
     }
-  })
+  }))
   if (!response.ok) {
     const error = new Error(`Microsoft Graph request failed with status ${response.status}`)
     error.status = response.status
+    error.retry_after_ms = retryAfterMilliseconds(response)
     throw error
   }
   return response.json()
@@ -128,14 +166,8 @@ const use_get_graph_message_body = async (graphResult, messageId, socks5, http) 
   }
 }
 
-const use_imap_api = async (refreshToken, clientId, email, socks5, http) => {
-  const data = await tokenRequest(
-    refreshToken,
-    clientId,
-    'https://outlook.office.com/IMAP.AccessAsUser.All',
-    socks5,
-    http
-  )
+const use_imap_api = async (refreshToken, clientId, email, socks5, http, tokenData = null) => {
+  const data = tokenData || await tokenRequest(refreshToken, clientId, IMAP_SCOPE, socks5, http)
   return {
     access_token: data.access_token,
     refresh_token: data.refresh_token || refreshToken,
@@ -327,6 +359,10 @@ const use_test_proxy = async (socks5, http) => {
 }
 
 module.exports = {
+  requestToken: tokenRequest,
+  GRAPH_SCOPE,
+  IMAP_SCOPE,
+  isTransientServiceError,
   use_graph_api,
   use_get_graph_emails,
   use_get_graph_message_body,
