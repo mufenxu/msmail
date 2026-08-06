@@ -51,6 +51,18 @@ const isTransientServiceError = (error) => RETRYABLE_STATUSES.has(
   Number(error?.status || error?.cause?.status || 0)
 )
 
+const isAuthError = (error) => {
+  const candidates = [error, error?.cause].filter(Boolean)
+  return candidates.some((candidate) => {
+    const oauthError = String(candidate.oauth_error || '').toLowerCase()
+    const message = String(candidate.message || '')
+    return oauthError === 'invalid_grant'
+      || oauthError === 'interaction_required'
+      || message.includes('invalid_grant')
+      || message.includes('AADSTS')
+  })
+}
+
 const tokenRequest = async (refreshToken, clientId, scope, socks5, http) => {
   const agentOptions = autoAgent(socks5, http)
   const body = new URLSearchParams({
@@ -68,8 +80,12 @@ const tokenRequest = async (refreshToken, clientId, scope, socks5, http) => {
   }))
 
   if (!response.ok) {
-    const error = new Error(`Microsoft token request failed with status ${response.status}`)
+    const data = await response.json().catch(() => ({}))
+    const error = new Error(
+      data.error_description || `Microsoft token request failed with status ${response.status}`
+    )
     error.status = response.status
+    error.oauth_error = data.error || ''
     error.retry_after_ms = retryAfterMilliseconds(response)
     throw error
   }
@@ -363,6 +379,7 @@ module.exports = {
   GRAPH_SCOPE,
   IMAP_SCOPE,
   isTransientServiceError,
+  isAuthError,
   use_graph_api,
   use_get_graph_emails,
   use_get_graph_message_body,

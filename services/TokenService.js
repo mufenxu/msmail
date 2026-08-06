@@ -3,7 +3,8 @@ const {
   requestToken,
   GRAPH_SCOPE,
   IMAP_SCOPE,
-  isTransientServiceError
+  isTransientServiceError,
+  isAuthError
 } = require('./MailService')
 
 const refreshLocks = new Map()
@@ -30,12 +31,6 @@ const getCachedToken = (key, refreshToken) => {
     refresh_token: cached.refreshToken,
     expires_in: Math.max(0, Math.floor((cached.expiresAt - Date.now()) / 1000))
   }
-}
-
-const isAuthError = (error) => {
-  const status = Number(error?.status || error?.cause?.status || 0)
-  const message = String(error?.message || '')
-  return [400, 401, 403].includes(status) || message.includes('AADSTS') || message.includes('invalid_grant')
 }
 
 const refreshAccountToken = async (account, scope, socks5, http) => {

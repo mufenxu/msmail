@@ -4,6 +4,7 @@ const {
   GRAPH_SCOPE,
   IMAP_SCOPE,
   isTransientServiceError,
+  isAuthError,
   use_graph_api,
   use_get_graph_emails,
   use_get_graph_message_body,
@@ -14,9 +15,7 @@ const {
 } = require('./MailService')
 
 const createMailError = (error) => {
-  const status = Number(error?.status || error?.cause?.status || 0)
-  const message = String(error?.message || '')
-  const authFailure = [400, 401, 403].includes(status) || message.includes('AADSTS')
+  const authFailure = isAuthError(error)
   const wrapped = new Error(authFailure
     ? 'Microsoft OAuth 授权失败，请检查 refresh_token、client_id 及邮箱读取权限。'
     : 'Microsoft 邮箱服务暂时不可用，请稍后重试。')
