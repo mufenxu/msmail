@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar">
     <div class="side-head">
-      <span>账号</span>
+      <span>邮箱账号</span>
       <button class="icon-btn" title="导入账号" @click="$emit('add')">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
           <path d="M12 5v14M5 12h14" />
@@ -23,7 +23,11 @@
         <div class="acc-avatar unified-avatar">全</div>
         <div class="acc-body">
           <div class="account-email">统一收件箱</div>
-          <div class="account-meta"><span>{{ accounts.length }} 个账号</span></div>
+          <div class="account-meta"><span>{{ accounts.length }} 个邮箱账号</span></div>
+          <div class="account-summary">
+            <span>收件箱 {{ mailboxTotal('INBOX') }}</span>
+            <span>垃圾邮件 {{ mailboxTotal('Junk') }}</span>
+          </div>
         </div>
       </div>
       <div
@@ -33,26 +37,45 @@
         :class="{ active: account.id === selectedAccountId }"
         @click="$emit('select', account)"
       >
-        <div class="acc-avatar" :style="avatarStyle(account.email)">{{ senderInitial(account.email) }}</div>
-        <div class="acc-body">
-          <div class="account-email" :title="account.email">{{ account.email }}</div>
-          <div class="account-meta" :title="syncTitle(account)">
-            <span v-for="part in metaParts(account)" :key="part">{{ part }}</span>
+        <div class="account-top">
+          <div class="acc-avatar" :style="avatarStyle(account.email)">{{ senderInitial(account.email) }}</div>
+          <div class="acc-body">
+            <div class="account-email" :title="account.email">{{ account.email }}</div>
+            <div class="account-meta">
+              <span>{{ domainLabel(account.email) }}</span>
+              <span>{{ providerLabel(account) }}</span>
+            </div>
+          </div>
+          <div class="acc-actions" @click.stop>
+            <button class="mini-icon" title="编辑" @click="$emit('edit', account)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
+            </button>
+            <button class="mini-icon danger" title="删除" @click="$emit('remove', account)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              </svg>
+            </button>
           </div>
         </div>
-        <div class="acc-actions" @click.stop>
-          <button class="mini-icon" title="编辑" @click="$emit('edit', account)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-            </svg>
-          </button>
-          <button class="mini-icon danger" title="删除" @click="$emit('remove', account)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 6h18" />
-              <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-            </svg>
-          </button>
+        <div class="account-details">
+          <div class="account-detail">
+            <span>Client ID</span>
+            <span class="account-detail-value account-client-id" :title="account.client_id">{{ account.client_id || '未设置' }}</span>
+          </div>
+          <div class="account-detail">
+            <span>邮件数量</span>
+            <span class="account-detail-value">收件 {{ accountMailboxCount(account, 'INBOX') }} · 垃圾 {{ accountMailboxCount(account, 'Junk') }}</span>
+          </div>
+          <div class="account-detail" :class="statusClass(account)">
+            <span>连接状态</span>
+            <span class="account-detail-value account-status">
+              <i></i>{{ statusLabel(account) }}<span v-if="account.has_mail_password" class="credential-state">密码已保存</span>
+            </span>
+          </div>
         </div>
       </div>
       <div v-if="!accounts.length" class="side-empty">
@@ -116,28 +139,50 @@ defineEmits<{
 
 const accountKey = (account: Account) => String(account.id ?? account.email)
 const accountCounts = (account: Account): MailboxCounts | undefined => props.counts[accountKey(account)]
-const metaParts = (account: Account): string[] => {
-  const parts = [domainLabel(account.email)]
-  const accountCountsValue = accountCounts(account)
-  if (accountCountsValue) {
-    if (accountCountsValue.INBOX != null) parts.push(`收件箱 ${accountCountsValue.INBOX}`)
-    if (accountCountsValue.Junk != null) parts.push(`垃圾 ${accountCountsValue.Junk}`)
-  }
-  const state = account.sync?.[props.folder]
-  if (account.token_status === 'reauth_required') parts.push('需要重新授权')
-  else if (account.token_status === 'error') parts.push('令牌刷新异常')
-  else if (state?.last_error) parts.push('同步异常')
-  else if (state?.provider) parts.push(state.provider.toUpperCase())
-  return parts
+const accountMailboxCount = (account: Account, mailbox: Mailbox): string | number => {
+  const counts = accountCounts(account)
+  const value = counts?.[mailbox] ?? account.counts?.[mailbox]
+  return value == null ? '—' : value
 }
 
-const syncTitle = (account: Account): string => {
-  if (account.token_status === 'reauth_required') return account.token_last_error || '需要重新授权'
-  if (account.token_status === 'error') return account.token_last_error || '令牌刷新失败'
+const mailboxTotal = (mailbox: Mailbox): string | number => {
+  let total = 0
+  let hasValue = false
+  props.accounts.forEach((account) => {
+    const value = accountMailboxCount(account, mailbox)
+    if (typeof value === 'number') {
+      total += value
+      hasValue = true
+    }
+  })
+  return hasValue ? total : '—'
+}
+
+const providerLabel = (account: Account): string => {
+  const provider = account.sync?.[props.folder]?.provider
+  return provider ? provider.toUpperCase() : '待同步'
+}
+
+const statusLabel = (account: Account): string => {
+  if (account.token_status === 'reauth_required') return '需要重新授权'
+  if (account.token_status === 'error') return '令牌刷新异常'
   const state = account.sync?.[props.folder]
-  if (state?.last_error) return state.last_error
-  if (state?.last_synced_at) return `上次成功：${new Date(state.last_synced_at).toLocaleString('zh-CN')}`
+  if (state?.last_error) return '同步异常'
+  if (state?.last_synced_at) {
+    return `已同步 ${new Date(state.last_synced_at).toLocaleString('zh-CN', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })}`
+  }
   return '尚未同步'
+}
+
+const statusClass = (account: Account): string => {
+  if (account.token_status === 'reauth_required' || account.token_status === 'error') return 'status-warning'
+  const state = account.sync?.[props.folder]
+  return state?.last_error ? 'status-warning' : 'status-ok'
 }
 
 const folderCount = (mailbox: Mailbox): string | number => {
@@ -159,7 +204,7 @@ const syncText = computed(() => {
 
 <style scoped>
 .sidebar {
-  width: 246px;
+  width: 304px;
   flex-shrink: 0;
   background: var(--mm-sidebar);
   border-right: 1px solid var(--mm-border);
@@ -202,26 +247,42 @@ const syncText = computed(() => {
 
 .account-item {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 9px;
+  align-items: stretch;
+  gap: 8px;
+  padding: 11px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  background: var(--mm-panel);
   cursor: pointer;
   position: relative;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .account-item:hover {
   background: var(--mm-hover);
+  border-color: var(--mm-border-strong);
 }
 
 .account-item.active {
   background: var(--mm-accent-soft);
+  border-color: var(--mm-accent-border);
+}
+
+.account-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.unified-item {
+  align-items: flex-start;
 }
 
 .acc-avatar {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   flex-shrink: 0;
   display: flex;
@@ -243,10 +304,10 @@ const syncText = computed(() => {
 
 .account-email {
   font-size: 13px;
+  line-height: 1.4;
   color: var(--mm-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .account-item.active .account-email {
@@ -258,19 +319,105 @@ const syncText = computed(() => {
   font-size: 11.5px;
   color: var(--mm-text-3);
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
-  white-space: nowrap;
-  overflow: hidden;
+  margin-top: 3px;
+  line-height: 1.4;
 }
 
-.acc-actions {
-  display: none;
-  gap: 3px;
+.account-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  color: var(--mm-text-2);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.account-summary span,
+.credential-state {
+  border-radius: 4px;
+  background: var(--mm-bg);
+  padding: 2px 5px;
+}
+
+.account-details {
+  display: grid;
+  gap: 4px;
+  padding-left: 46px;
+  margin-top: 1px;
+}
+
+.account-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--mm-text-3);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.account-detail > span:first-child {
+  width: 52px;
   flex-shrink: 0;
 }
 
-.account-item:hover .acc-actions {
+.account-detail-value {
+  flex: 1;
+  min-width: 0;
+  color: var(--mm-text-2);
+  text-align: right;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.account-client-id {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+}
+
+.account-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.account-status i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--mm-text-3);
+}
+
+.status-ok .account-status {
+  color: var(--mm-ok);
+}
+
+.status-ok .account-status i {
+  background: var(--mm-ok);
+}
+
+.status-warning .account-status {
+  color: #a16b10;
+}
+
+.status-warning .account-status i {
+  background: #c7a24b;
+}
+
+.credential-state {
+  color: var(--mm-text-3);
+  font-size: 10px;
+}
+
+.acc-actions {
   display: flex;
+  gap: 3px;
+  flex-shrink: 0;
 }
 
 .mini-icon {
@@ -323,7 +470,7 @@ const syncText = computed(() => {
 .side-divider {
   height: 1px;
   background: var(--mm-border);
-  margin: 14px 6px;
+  margin: 14px 6px 12px;
 }
 
 .folder-item {
