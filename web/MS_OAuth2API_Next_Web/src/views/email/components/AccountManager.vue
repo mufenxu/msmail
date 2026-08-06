@@ -25,6 +25,34 @@
           </div>
         </template>
       </el-table-column>
+      <el-table-column label="邮箱密码" width="180">
+        <template #default="{ row }">
+          <div v-if="row.has_mail_password" class="mail-password">
+            <span class="password-value">
+              {{ passwordVisible[accountKey(row)] ? (passwordValues[accountKey(row)] || '加载中…') : '••••••••' }}
+            </span>
+            <button
+              type="button"
+              class="password-toggle"
+              :title="passwordVisible[accountKey(row)] ? '隐藏邮箱密码' : '显示邮箱密码'"
+              :aria-label="passwordVisible[accountKey(row)] ? '隐藏邮箱密码' : '显示邮箱密码'"
+              :disabled="passwordLoading[accountKey(row)]"
+              @click.stop="togglePassword(row)"
+            >
+              <svg v-if="!passwordVisible[accountKey(row)]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                <circle cx="12" cy="12" r="2.5" />
+              </svg>
+              <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3l18 18" />
+                <path d="M10.6 5.2A10.8 10.8 0 0 1 12 5c6 0 9.5 7 9.5 7a17.7 17.7 0 0 1-3.2 4.2" />
+                <path d="M6.2 6.3C3.8 8 2.5 12 2.5 12a17.6 17.6 0 0 0 4.1 4.8A9.2 9.2 0 0 0 12 19c1.1 0 2.1-.2 3-.6" />
+              </svg>
+            </button>
+          </div>
+          <span v-else class="password-empty">未提供</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="created_at" label="创建时间" width="170" />
       <el-table-column label="操作" width="150" align="right">
         <template #default="{ row }">
@@ -58,11 +86,50 @@ const emit = defineEmits<{
 }>()
 
 const selected = ref<Account[]>([])
+const passwordValues = ref<Record<string, string>>({})
+const passwordVisible = ref<Record<string, boolean>>({})
+const passwordLoading = ref<Record<string, boolean>>({})
+
+const accountKey = (account: Account) => String(account.id ?? account.email)
+
+const requestPassword = async (account: Account) => {
+  const response = await fetch(`/api/accounts/${account.id}/password`, {
+    method: 'GET',
+    credentials: 'same-origin'
+  })
+  const data = await response.json()
+  if (!response.ok || data.code != 200) {
+    throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`)
+  }
+  return data.data as { password: string }
+}
+
+const togglePassword = async (account: Account) => {
+  if (!account.has_mail_password || account.id == null) return
+  const key = accountKey(account)
+  if (Object.prototype.hasOwnProperty.call(passwordValues.value, key)) {
+    passwordVisible.value = { ...passwordVisible.value, [key]: !passwordVisible.value[key] }
+    return
+  }
+  passwordLoading.value = { ...passwordLoading.value, [key]: true }
+  try {
+    const data = await requestPassword(account)
+    passwordValues.value = { ...passwordValues.value, [key]: data.password }
+    passwordVisible.value = { ...passwordVisible.value, [key]: true }
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '邮箱密码读取失败')
+  } finally {
+    passwordLoading.value = { ...passwordLoading.value, [key]: false }
+  }
+}
 
 watch(
   () => props.accounts,
   () => {
     selected.value = []
+    passwordValues.value = {}
+    passwordVisible.value = {}
+    passwordLoading.value = {}
   }
 )
 
@@ -128,6 +195,52 @@ const shortId = (value: string): string => {
 .cell-sub {
   font-size: 12px;
   color: var(--mm-text-3);
+}
+
+.mail-password {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.password-value {
+  min-width: 76px;
+  overflow: hidden;
+  color: var(--mm-text-2);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.password-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--mm-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-text-3);
+  cursor: pointer;
+}
+
+.password-toggle:hover:not(:disabled) {
+  border-color: var(--mm-primary);
+  color: var(--mm-primary);
+}
+
+.password-toggle:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.password-empty {
+  color: var(--mm-text-3);
+  font-size: 12px;
 }
 
 .manager-foot {

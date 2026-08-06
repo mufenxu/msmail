@@ -3,6 +3,7 @@ export interface Account {
   email: string
   client_id: string
   refresh_token?: string
+  has_mail_password?: boolean
   created_at?: string
   updated_at?: string
   sync?: Partial<Record<Mailbox, AccountSyncState>>

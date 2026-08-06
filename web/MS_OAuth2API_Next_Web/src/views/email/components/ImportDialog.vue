@@ -40,7 +40,7 @@
         v-model="copyTextarea"
         type="textarea"
         :rows="10"
-        placeholder="每行一条：email----client_id----refresh_token&#10;&#10;也兼容：email----api_password----client_id----refresh_token"
+        placeholder="每行一条：email----client_id----refresh_token&#10;&#10;也支持：email----邮箱密码----client_id----refresh_token"
       />
     </div>
 
@@ -50,7 +50,7 @@
         <el-input v-model="splitSymbol" class="option-input" placeholder="----" />
       </div>
       <div class="format-hint">
-        推荐格式：<code>email----client_id----refresh_token</code>；旧四段格式仍可导入，其中第二段访问密码会被忽略。
+        推荐格式：<code>email----client_id----refresh_token</code>；四段格式的第二段会自动识别为邮箱密码。
       </div>
     </div>
 
@@ -138,12 +138,14 @@ const parseFileContent = (file: UploadRawFile) => {
   reader.readAsText(file)
 }
 
-const parseLines = (lines: string[]): Array<{ email: string; client_id: string; refresh_token: string }> =>
+const parseLines = (lines: string[]): Array<{ email: string; mail_password?: string; client_id: string; refresh_token: string }> =>
   lines
     .map((item) => {
       const parts = item.split(splitSymbol.value)
+      const hasPassword = parts.length >= 4
       return {
         email: parts[0]?.trim() || '',
+        ...(hasPassword && parts[1]?.trim() ? { mail_password: parts[1].trim() } : {}),
         client_id: parts.length >= 4 ? parts[2]?.trim() || '' : parts[1]?.trim() || '',
         refresh_token: (
           parts.length >= 4 ? parts.slice(3).join(splitSymbol.value) : parts.slice(2).join(splitSymbol.value)

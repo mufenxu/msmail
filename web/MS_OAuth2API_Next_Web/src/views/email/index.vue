@@ -161,7 +161,7 @@ const requestApi = async (url: string, method = 'POST', body: Record<string, unk
 }
 
 // ---------- 旧版本地数据迁移 ----------
-const readLegacyAccounts = (): Array<Partial<Account> & { password?: string }> => {
+const readLegacyAccounts = (): Array<Partial<Account> & { password?: string; mail_password?: string }> => {
   try {
     const parsed = JSON.parse(localStorage.getItem('localMailList') || '[]')
     return Array.isArray(parsed) ? parsed : []
@@ -176,7 +176,8 @@ localStorage.removeItem('monkey-mail-api-password')
 const legacyMailList = storedMailList.map((item) => ({
   email: item.email || '',
   client_id: item.client_id || '',
-  refresh_token: item.refresh_token || ''
+  refresh_token: item.refresh_token || '',
+  mail_password: item.mail_password || ''
 }))
 if (storedMailList.length) {
   localStorage.setItem('localMailList', JSON.stringify(legacyMailList))
@@ -188,7 +189,8 @@ const migrateLocalData = async () => {
     const account = (await requestApi('/api/accounts', 'POST', {
       email: legacyAccount.email,
       client_id: legacyAccount.client_id,
-      refresh_token: legacyAccount.refresh_token
+      refresh_token: legacyAccount.refresh_token,
+      mail_password: legacyAccount.mail_password || undefined
     })) as Account
 
     for (const mailbox of ['INBOX', 'Junk'] as Mailbox[]) {

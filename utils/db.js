@@ -16,6 +16,7 @@ db.exec(`
     email TEXT NOT NULL COLLATE NOCASE UNIQUE,
     client_id TEXT NOT NULL,
     refresh_token TEXT NOT NULL,
+    mail_password TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -60,6 +61,7 @@ const ensureColumn = (table, column, definition) => {
 
 ensureColumn('mail_messages', 'provider', "TEXT NOT NULL DEFAULT 'legacy'")
 ensureColumn('mail_messages', 'body_loaded', 'INTEGER NOT NULL DEFAULT 1')
+ensureColumn('mail_accounts', 'mail_password', 'TEXT')
 ensureColumn('mail_sync_state', 'sync_cursor', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('mail_sync_state', 'last_error', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('mail_sync_state', 'provider', "TEXT NOT NULL DEFAULT ''")
@@ -104,6 +106,7 @@ const publicAccount = (row) => ({
   id: row.id,
   email: row.email,
   client_id: row.client_id,
+  has_mail_password: Boolean(row.mail_password),
   created_at: row.created_at,
   updated_at: row.updated_at
 })
@@ -112,7 +115,7 @@ const normalizeMailbox = (mailbox) => mailbox === 'Junk' ? 'Junk' : 'INBOX'
 
 const listAccounts = () => {
   const accounts = db.prepare(`
-  SELECT id, email, client_id, created_at, updated_at
+  SELECT id, email, client_id, mail_password, created_at, updated_at
   FROM mail_accounts
   ORDER BY id ASC
   `).all().map(publicAccount)
@@ -146,14 +149,14 @@ const listAccounts = () => {
 }
 
 const listAccountCredentials = () => db.prepare(`
-  SELECT id, email, client_id, refresh_token, created_at, updated_at
+  SELECT id, email, client_id, refresh_token, mail_password, created_at, updated_at
   FROM mail_accounts
   ORDER BY id ASC
 `).all().map((row) => ({ ...publicAccount(row), refresh_token: decrypt(row.refresh_token) }))
 
 const getAccountCredentials = (id) => {
   const row = db.prepare(`
-    SELECT id, email, client_id, refresh_token, created_at, updated_at
+    SELECT id, email, client_id, refresh_token, mail_password, created_at, updated_at
     FROM mail_accounts
     WHERE id = ?
   `).get(Number(id))
@@ -161,10 +164,20 @@ const getAccountCredentials = (id) => {
   return { ...publicAccount(row), refresh_token: decrypt(row.refresh_token) }
 }
 
-const upsertAccount = ({ id, email, client_id, refresh_token }) => {
+const getAccountMailPassword = (id) => {
+  const row = db.prepare(`
+    SELECT mail_password
+    FROM mail_accounts
+    WHERE id = ?
+  `).get(Number(id))
+  return row ? decrypt(row.mail_password) : null
+}
+
+const upsertAccount = ({ id, email, client_id, refresh_token, mail_password }) => {
   const normalizedEmail = String(email || '').trim()
   const normalizedClientId = String(client_id || '').trim()
   const normalizedRefreshToken = refresh_token == null ? null : String(refresh_token).trim()
+  const normalizedMailPassword = mail_password == null ? null : String(mail_password).trim()
 
   if (!normalizedEmail || !normalizedClientId || (id == null && !normalizedRefreshToken)) {
     throw new Error('邮箱、客户端 ID 和刷新令牌不能为空')
@@ -175,12 +188,14 @@ const upsertAccount = ({ id, email, client_id, refresh_token }) => {
       UPDATE mail_accounts
       SET email = ?, client_id = ?,
           refresh_token = COALESCE(?, refresh_token),
+          mail_password = COALESCE(?, mail_password),
           updated_at = datetime('now')
       WHERE id = ?
     `).run(
       normalizedEmail,
       normalizedClientId,
       normalizedRefreshToken ? encrypt(normalizedRefreshToken) : null,
+      normalizedMailPassword ? encrypt(normalizedMailPassword) : null,
       Number(id)
     )
     if (result.changes === 0) return null
@@ -188,13 +203,19 @@ const upsertAccount = ({ id, email, client_id, refresh_token }) => {
   }
 
   db.prepare(`
-    INSERT INTO mail_accounts (email, client_id, refresh_token)
-    VALUES (?, ?, ?)
+    INSERT INTO mail_accounts (email, client_id, refresh_token, mail_password)
+    VALUES (?, ?, ?, ?)
     ON CONFLICT(email) DO UPDATE SET
       client_id = excluded.client_id,
       refresh_token = excluded.refresh_token,
+      mail_password = COALESCE(excluded.mail_password, mail_accounts.mail_password),
       updated_at = datetime('now')
-  `).run(normalizedEmail, normalizedClientId, encrypt(normalizedRefreshToken))
+  `).run(
+    normalizedEmail,
+    normalizedClientId,
+    encrypt(normalizedRefreshToken),
+    normalizedMailPassword ? encrypt(normalizedMailPassword) : null
+  )
 
   return publicAccount(db.prepare('SELECT * FROM mail_accounts WHERE email = ?').get(normalizedEmail))
 }
@@ -376,6 +397,7 @@ module.exports = {
   listAccounts,
   listAccountCredentials,
   getAccountCredentials,
+  getAccountMailPassword,
   upsertAccount,
   deleteAccount,
   updateRefreshToken,

@@ -26,7 +26,8 @@ const controller = {
         id: body.id,
         email: body.email,
         client_id: body.client_id,
-        refresh_token: body.refresh_token
+        refresh_token: body.refresh_token,
+        mail_password: body.mail_password
       })
       if (!data) ctx.throw(404, '邮箱账号不存在')
       ctx.body = { code: '200', data }
@@ -36,6 +37,12 @@ const controller = {
       }
       ctx.throw(error.status || 400, error.message)
     }
+  },
+
+  async password(ctx) {
+    const password = store.getAccountMailPassword(ctx.params.id)
+    if (password == null) ctx.throw(404, '邮箱账号不存在')
+    ctx.body = { code: '200', data: { password } }
   },
 
   async remove(ctx) {
