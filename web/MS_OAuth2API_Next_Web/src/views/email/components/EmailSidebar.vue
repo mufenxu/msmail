@@ -247,6 +247,7 @@ const syncText = computed(() => {
 
 .account-item {
   display: flex;
+  flex-direction: column;
   align-items: stretch;
   gap: 8px;
   padding: 11px 10px;
@@ -277,6 +278,7 @@ const syncText = computed(() => {
 }
 
 .unified-item {
+  flex-direction: row;
   align-items: flex-start;
 }
 
