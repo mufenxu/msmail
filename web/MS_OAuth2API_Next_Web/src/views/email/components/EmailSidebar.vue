@@ -70,6 +70,14 @@
             <span>连接状态</span>
             <span class="account-detail-value account-status">
               <i></i>{{ statusLabel(account) }}<span v-if="account.has_mail_password" class="credential-state">密码已保存</span>
+              <button
+                v-if="account.token_status === 'reauth_required'"
+                type="button"
+                class="reauth-btn"
+                @click.stop="$emit('reauthorize', account)"
+              >
+                重新授权
+              </button>
             </span>
           </div>
         </div>
@@ -128,6 +136,7 @@ defineEmits<{
   (e: 'add'): void
   (e: 'edit', account: Account): void
   (e: 'remove', account: Account): void
+  (e: 'reauthorize', account: Account): void
   (e: 'folder', mailbox: Mailbox): void
   (e: 'manage'): void
   (e: 'configure-password'): void
@@ -405,6 +414,21 @@ const syncText = computed(() => {
 .credential-state {
   color: var(--mm-text-3);
   font-size: 10px;
+}
+
+.reauth-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #a16b10;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.reauth-btn:hover {
+  color: var(--mm-accent);
 }
 
 .acc-actions {

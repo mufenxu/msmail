@@ -1,5 +1,6 @@
 const store = require('../utils/db')
 const mailService = require('../services/api')
+const deviceAuthService = require('../services/DeviceAuthService')
 const { normalizeMailbox } = require('../services/SyncService')
 
 const getBody = (ctx) => ctx.request.body || {}
@@ -37,6 +38,18 @@ const controller = {
       }
       ctx.throw(error.status || 400, error.message)
     }
+  },
+
+  async startReauthorization(ctx) {
+    ctx.body = { code: '200', data: await deviceAuthService.start(ctx.params.id) }
+  },
+
+  async pollReauthorization(ctx) {
+    ctx.body = { code: '200', data: await deviceAuthService.poll(ctx.params.id, ctx.params.flowId) }
+  },
+
+  async cancelReauthorization(ctx) {
+    ctx.body = { code: '200', data: deviceAuthService.cancel(ctx.params.id, ctx.params.flowId) }
   },
 
   async password(ctx) {

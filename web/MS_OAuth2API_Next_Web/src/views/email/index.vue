@@ -41,6 +41,7 @@
         @add="importDialogVisible = true"
         @edit="openEdit"
         @remove="handleDeleteAccount"
+        @reauthorize="openReauthorize"
         @folder="handleSwitchFolder"
         @manage="managerVisible = true"
         @configure-password="openPasswordDialog"
@@ -82,6 +83,11 @@
       @delete-accounts="handleDeleteAccounts"
       @import="importDialogVisible = true"
       @configure-password="openPasswordDialog"
+    />
+    <ReauthDialog
+      v-model="reauthDialogVisible"
+      :account="reauthAccount"
+      @completed="handleReauthCompleted"
     />
 
     <el-dialog v-model="editDialogVisible" title="编辑账号" width="520" class="mm-dialog" append-to-body>
@@ -129,6 +135,7 @@ import MessageList from './components/MessageList.vue'
 import ReadingPane from './components/ReadingPane.vue'
 import ImportDialog from './components/ImportDialog.vue'
 import AccountManager from './components/AccountManager.vue'
+import ReauthDialog from './components/ReauthDialog.vue'
 
 const authenticated = ref(false)
 const passwordSet = computed(() => authenticated.value)
@@ -439,12 +446,25 @@ const saving = ref(false)
 const editForm = ref<{ email: string; client_id: string }>({ email: '', client_id: '' })
 const editRefreshToken = ref('')
 const editingId = ref<number | null>(null)
+const reauthDialogVisible = ref(false)
+const reauthAccount = ref<Account | null>(null)
 
 const openEdit = (account: Account) => {
   editingId.value = account.id ?? null
   editForm.value = { email: account.email, client_id: account.client_id }
   editRefreshToken.value = ''
   editDialogVisible.value = true
+}
+
+const openReauthorize = (account: Account) => {
+  reauthAccount.value = account
+  reauthDialogVisible.value = true
+}
+
+const handleReauthCompleted = async (accountId: number) => {
+  await loadAccounts(false)
+  if (selectedAccountId.value === accountId) await loadMessages(true)
+  ElMessage.success('授权成功，请点击同步以收取最新邮件')
 }
 
 const handleSaveEdit = async () => {
